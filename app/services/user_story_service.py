@@ -6,6 +6,11 @@ from groq import Groq
 
 from app.models.user_story import UserStory
 
+
+# ============================================================
+# ENVIRONMENT / CLIENT
+# ============================================================
+
 load_dotenv()
 
 client = Groq(
@@ -13,11 +18,21 @@ client = Groq(
 )
 
 
+# ============================================================
+# USER STORY CANDIDATE GENERATION
+# ============================================================
+
 def generate_user_story_candidates(
     business_requirement,
     approved_epic,
     feedback=None
 ):
+    """
+    Generate all distinct User Stories for ONE approved Epic.
+
+    Returns:
+        list[UserStory]
+    """
 
     feedback_text = ""
 
@@ -29,62 +44,106 @@ Validator feedback:
 {feedback}
 
 Generate corrected User Stories.
-Do not repeat the identified problems.
+
+Important:
+- Fix the specific problems identified above.
+- Do not repeat unsupported business behavior.
+- Do not introduce new requirements.
 """
+
 
     prompt = f"""
 You are an experienced Agile Business Analyst.
 
-Original Business Requirement:
+============================================================
+ORIGINAL BUSINESS REQUIREMENT
+============================================================
 
 {business_requirement}
 
-Approved Epic:
 
-Title: {approved_epic["title"]}
-Description: {approved_epic["description"]}
+============================================================
+APPROVED EPIC
+============================================================
+
+Title:
+{approved_epic["title"]}
+
+Description:
+{approved_epic["description"]}
+
+
+============================================================
+TASK
+============================================================
 
 Generate all DISTINCT User Stories required for this
 approved Epic.
 
-Rules:
+
+============================================================
+STRICT RULES
+============================================================
 
 1. Generate only genuinely distinct User Stories.
 
-2. Do not create duplicate or artificially split stories.
+2. Do not create duplicate User Stories.
 
-3. Every Story must directly support the approved Epic.
+3. Do not artificially split one simple capability.
 
-4. Every Story must be supported by the original
+4. Every User Story must directly support the approved Epic.
+
+5. Every User Story must be supported by the ORIGINAL
    Business Requirement.
 
-5. Do not introduce unsupported business behavior.
+6. The Epic cannot introduce a business behavior that
+   is not supported by the Original Business Requirement.
 
-6. Do not assume common industry behavior.
+7. Do not infer missing requirements.
 
-7. Do not add:
+8. Do not use common industry practices as evidence.
+
+9. Do not add unsupported:
    - security rules
    - validation rules
    - emails
    - reset links
    - verification codes
    - expiration times
+   - account verification
+   - notifications
+   - additional workflows
    - APIs
    - databases
    - technical implementation details
 
-8. Use:
+10. Use the exact Agile format:
 
-   As a <user>, I want <goal>, so that <benefit>.
+    As a <user>, I want <goal>, so that <benefit>.
 
-9. If one User Story is sufficient, return exactly one.
+11. The User Story should describe a business goal,
+    not technical implementation.
 
-10. Do not generate IDs.
+12. If the Epic requires only one User Story,
+    generate exactly one.
+
+13. If the Epic genuinely requires multiple distinct
+    User Stories, generate all of them.
+
+14. Do not generate IDs.
+
+15. Do not add explanations outside the structured output.
 
 {feedback_text}
 
-Return only the structured list.
+
+============================================================
+OUTPUT
+============================================================
+
+Return only the structured list of User Stories.
 """
+
 
     schema = {
         "type": "object",
@@ -109,18 +168,23 @@ Return only the structured list.
                 }
             }
         },
-        "required": ["user_stories"],
+        "required": [
+            "user_stories"
+        ],
         "additionalProperties": False
     }
 
+
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
+
         messages=[
             {
                 "role": "user",
                 "content": prompt
             }
         ],
+
         response_format={
             "type": "json_schema",
             "json_schema": {
@@ -129,12 +193,27 @@ Return only the structured list.
                 "strict": True
             }
         },
+
         temperature=0
     )
 
-    data = json.loads(
-        response.choices[0].message.content
-    )
+
+    content = response.choices[0].message.content
+
+    if not content:
+        raise ValueError(
+            "LLM returned empty User Story response."
+        )
+
+
+    data = json.loads(content)
+
+
+    if "user_stories" not in data:
+        raise ValueError(
+            "LLM response does not contain 'user_stories'."
+        )
+
 
     return [
         UserStory.model_validate(story)
@@ -142,52 +221,123 @@ Return only the structured list.
     ]
 
 
+# ============================================================
+# PYTHON VALIDATION
+# ============================================================
+
 def python_validate_user_story(user_story):
+    """
+    Basic deterministic validation.
+
+    Returns:
+        (bool, list[str])
+    """
 
     errors = []
 
+
+    # --------------------------------------------------------
+    # Title
+    # --------------------------------------------------------
+
     if not user_story.title.strip():
-        errors.append("User Story title is empty.")
+
+        errors.append(
+            "User Story title is empty."
+        )
+
+
+    # --------------------------------------------------------
+    # Story
+    # --------------------------------------------------------
 
     if not user_story.story.strip():
-        errors.append("User Story is empty.")
 
-    story_lower = user_story.story.lower()
+        errors.append(
+            "User Story is empty."
+        )
 
-    if "as a" not in story_lower:
-        errors.append("Missing 'As a'.")
+    else:
 
-    if "i want" not in story_lower:
-        errors.append("Missing 'I want'.")
+        story_lower = (
+            user_story.story
+            .strip()
+            .lower()
+        )
 
-    if "so that" not in story_lower:
-        errors.append("Missing 'so that'.")
+        if "as a" not in story_lower:
+
+            errors.append(
+                "Missing 'As a'."
+            )
+
+        if "i want" not in story_lower:
+
+            errors.append(
+                "Missing 'I want'."
+            )
+
+        if "so that" not in story_lower:
+
+            errors.append(
+                "Missing 'so that'."
+            )
+
+
+    # --------------------------------------------------------
+    # Result
+    # --------------------------------------------------------
 
     if errors:
+
         return False, errors
 
     return True, []
 
+
+# ============================================================
+# SEMANTIC VALIDATION
+# ============================================================
 
 def semantic_validate_user_story(
     business_requirement,
     approved_epic,
     user_story
 ):
+    """
+    LLM-based semantic traceability validation.
+
+    Returns:
+        PASS
+        OR
+        FAIL: reason
+    """
 
     validation_prompt = f"""
 You are a STRICT requirements traceability validator.
 
-Original Business Requirement:
+
+============================================================
+ORIGINAL BUSINESS REQUIREMENT
+============================================================
 
 {business_requirement}
 
-Approved Epic:
 
-Title: {approved_epic["title"]}
-Description: {approved_epic["description"]}
+============================================================
+APPROVED EPIC
+============================================================
 
-Candidate User Story:
+Title:
+{approved_epic["title"]}
+
+Description:
+{approved_epic["description"]}
+
+
+============================================================
+CANDIDATE USER STORY
+============================================================
 
 Title:
 {user_story.title}
@@ -195,46 +345,64 @@ Title:
 Story:
 {user_story.story}
 
-Validate the User Story.
 
-Rules:
+============================================================
+VALIDATION RULES
+============================================================
 
-1. The Story must directly support the approved Epic.
+1. The User Story must directly support the approved Epic.
 
-2. The Story must preserve the original business intent.
+2. The User Story must preserve the original business intent.
 
-3. EVERY business behavior, condition, user goal,
-   and business assumption in the Story must be
-   supported by the Original Business Requirement.
+3. EVERY business behavior in the User Story must be
+   supported by the ORIGINAL Business Requirement.
 
-4. Do not infer additional requirements.
+4. Do not infer missing requirements.
 
 5. Do not use common industry practices as evidence.
 
 6. Reject unsupported:
-   - forgotten-password scenarios
-   - compromised-password scenarios
-   - email sending
+   - security requirements
+   - email behavior
    - reset links
    - verification codes
-   - security requirements
    - expiration times
    - account verification
+   - notifications
    - additional workflows
    - APIs
    - databases
    - technical implementation
 
-7. The Epic provides context but cannot add new
-   business requirements that were not supported
-   by the Original Business Requirement.
+7. Do not allow the Epic to introduce a requirement that
+   is not present in the Original Business Requirement.
 
-8. The Story must follow:
+8. The User Story must describe a business capability.
+
+9. The User Story must follow:
 
    As a <user>, I want <goal>, so that <benefit>.
 
+10. Do not reject a User Story merely because it uses
+    different wording from the requirement.
+
+11. Focus on BUSINESS SEMANTICS, not exact wording.
+
+12. If the original requirement explicitly supports a
+    concept such as password recovery, regaining access,
+    defining a new password, or another business behavior,
+    that concept may be used.
+
+13. If a behavior is NOT supported by the requirement,
+    reject it.
+
 If ANY unsupported business behavior exists,
 return FAIL.
+
+
+============================================================
+OUTPUT FORMAT
+============================================================
 
 Return exactly:
 
@@ -245,38 +413,96 @@ OR
 FAIL: <specific reason>
 """
 
+
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
+
         messages=[
             {
                 "role": "user",
                 "content": validation_prompt
             }
         ],
+
         temperature=0
     )
 
-    return response.choices[0].message.content.strip()
 
+    result = response.choices[0].message.content
+
+
+    if not result:
+
+        return (
+            "FAIL: Semantic validator returned empty response."
+        )
+
+
+    return result.strip()
+
+
+# ============================================================
+# DUPLICATE DETECTION
+# ============================================================
 
 def is_duplicate_user_story(
     user_story,
     approved_stories
 ):
+    """
+    Detect exact duplicate title or story.
 
-    new_title = user_story.title.strip().lower()
-    new_story = user_story.story.strip().lower()
+    Returns:
+        True  -> duplicate
+        False -> unique
+    """
+
+    new_title = (
+        user_story.title
+        .strip()
+        .lower()
+    )
+
+    new_story = (
+        user_story.story
+        .strip()
+        .lower()
+    )
+
 
     for approved in approved_stories:
 
-        if new_title == approved["title"].strip().lower():
+        existing_title = (
+            approved["title"]
+            .strip()
+            .lower()
+        )
+
+        existing_story = (
+            approved["story"]
+            .strip()
+            .lower()
+        )
+
+
+        # Exact title match
+        if new_title == existing_title:
+
             return True
 
-        if new_story == approved["story"].strip().lower():
+
+        # Exact story match
+        if new_story == existing_story:
+
             return True
+
 
     return False
 
+
+# ============================================================
+# USER STORY PIPELINE
+# ============================================================
 
 def generate_and_validate_user_stories(
     business_requirement,
@@ -285,106 +511,222 @@ def generate_and_validate_user_stories(
     epic_id="EPIC-001",
     max_attempts=3
 ):
+    """
+    Generate, validate and return User Stories
+    for ONE approved Epic.
+
+    Important:
+        This function ALWAYS returns a list.
+
+    Example:
+
+        [
+            {
+                "id": "US-001",
+                "title": "...",
+                "story": "...",
+                "parent_epic_id": "EPIC-001",
+                "source_requirement_id": "BR-001"
+            }
+        ]
+    """
+
 
     feedback = None
+
     approved_stories = []
 
-    for attempt in range(1, max_attempts + 1):
+
+    # ========================================================
+    # MAX ATTEMPTS PROTECTION
+    # ========================================================
+
+    for attempt in range(
+        1,
+        max_attempts + 1
+    ):
+
 
         print(
             f"\n===== USER STORY GENERATION ATTEMPT "
             f"{attempt} ====="
         )
 
+
+        # ====================================================
+        # GENERATE CANDIDATES
+        # ====================================================
+
         try:
 
-            candidates = generate_user_story_candidates(
-                business_requirement,
-                approved_epic,
-                feedback
+            candidates = (
+                generate_user_story_candidates(
+                    business_requirement,
+                    approved_epic,
+                    feedback
+                )
             )
+
 
         except Exception as error:
 
-            print("\n❌ USER STORY GENERATION ERROR")
-            print("Error:", error)
+            print(
+                "\n❌ USER STORY GENERATION ERROR"
+            )
+
+            print(
+                "Error:",
+                error
+            )
+
 
             feedback = (
                 "User Story generation failed. "
-                "Generate a valid structured list."
+                "Return a valid structured list."
             )
 
             continue
+
+
+        # ====================================================
+        # EMPTY RESULT
+        # ====================================================
 
         if not candidates:
 
-            feedback = (
-                "No User Stories were generated. "
-                "At least one valid User Story is required."
+            print(
+                "\n❌ NO USER STORY CANDIDATES"
             )
 
-            print("\n❌ NO USER STORY CANDIDATES")
+
+            feedback = (
+                "No User Stories were generated. "
+                "Generate at least one valid User Story "
+                "for the approved Epic."
+            )
 
             continue
+
 
         print(
             f"\nGenerated {len(candidates)} "
             f"User Story candidate(s)"
         )
 
+
+        # ====================================================
+        # REJECTION FEEDBACK
+        # ====================================================
+
         rejected_feedback = []
+
+
+        # ====================================================
+        # VALIDATE EACH CANDIDATE
+        # ====================================================
 
         for index, story in enumerate(
             candidates,
             start=1
         ):
 
+
             print(
                 f"\n--- CANDIDATE USER STORY {index} ---"
             )
 
-            print("Title:", story.title)
-            print("Story:", story.story)
 
-            valid, errors = python_validate_user_story(
-                story
+            print(
+                "Title:",
+                story.title
             )
+
+
+            print(
+                "Story:",
+                story.story
+            )
+
+
+            # =================================================
+            # PYTHON VALIDATION
+            # =================================================
+
+            valid, errors = (
+                python_validate_user_story(
+                    story
+                )
+            )
+
 
             if not valid:
 
-                reason = "; ".join(errors)
+                reason = "; ".join(
+                    errors
+                )
+
 
                 print(
                     "PYTHON VALIDATION: FAIL"
                 )
-                print("Reason:", reason)
 
-                rejected_feedback.append(reason)
+
+                print(
+                    "Reason:",
+                    reason
+                )
+
+
+                rejected_feedback.append(
+                    reason
+                )
+
 
                 continue
+
 
             print(
                 "PYTHON VALIDATION: PASS"
             )
+
+
+            # =================================================
+            # DUPLICATE VALIDATION
+            # =================================================
 
             if is_duplicate_user_story(
                 story,
                 approved_stories
             ):
 
+
                 print(
                     "DUPLICATE CHECK: FAIL"
                 )
 
-                rejected_feedback.append(
-                    f"Duplicate User Story: {story.title}"
+
+                reason = (
+                    f"Duplicate User Story: "
+                    f"{story.title}"
                 )
 
+
+                rejected_feedback.append(
+                    reason
+                )
+
+
                 continue
+
 
             print(
                 "DUPLICATE CHECK: PASS"
             )
+
+
+            # =================================================
+            # SEMANTIC VALIDATION
+            # =================================================
 
             try:
 
@@ -396,70 +738,134 @@ def generate_and_validate_user_stories(
                     )
                 )
 
+
             except Exception as error:
 
                 print(
-                    "❌ SEMANTIC VALIDATION ERROR"
+                    "\n❌ SEMANTIC VALIDATION ERROR"
                 )
-                print("Error:", error)
+
+
+                print(
+                    "Error:",
+                    error
+                )
+
 
                 rejected_feedback.append(
                     "Semantic validation failed."
                 )
 
+
                 continue
+
 
             print(
                 "SEMANTIC VALIDATION:"
             )
-            print(semantic_result)
 
-            if semantic_result.startswith("PASS"):
+
+            print(
+                semantic_result
+            )
+
+
+            # =================================================
+            # APPROVAL
+            # =================================================
+
+            if semantic_result.startswith(
+                "PASS"
+            ):
+
 
                 approved_stories.append(
                     {
-                        "title": story.title,
-                        "story": story.story
+                        "title":
+                            story.title,
+
+                        "story":
+                            story.story
                     }
                 )
 
-                print("✅ USER STORY APPROVED")
+
+                print(
+                    "✅ USER STORY APPROVED"
+                )
+
 
             else:
 
-                print("❌ USER STORY REJECTED")
+
+                print(
+                    "❌ USER STORY REJECTED"
+                )
+
 
                 rejected_feedback.append(
                     semantic_result
                 )
 
+
+        # ====================================================
+        # APPROVED STORIES FOUND
+        # ====================================================
+
         if approved_stories:
 
+
             final_stories = []
+
+
+            # ------------------------------------------------
+            # Assign IDs only after validation
+            # ------------------------------------------------
 
             for index, story in enumerate(
                 approved_stories,
                 start=1
             ):
 
+
                 final_stories.append(
                     {
-                        "id": f"US-{index:03d}",
-                        "title": story["title"],
-                        "story": story["story"],
-                        "parent_epic_id": epic_id,
+                        "id":
+                            f"US-{index:03d}",
+
+                        "title":
+                            story["title"],
+
+                        "story":
+                            story["story"],
+
+                        "parent_epic_id":
+                            epic_id,
+
                         "source_requirement_id":
                             business_requirement_id
                     }
                 )
 
+
+            # ------------------------------------------------
+            # Print approved stories
+            # ------------------------------------------------
+
             print(
                 "\n========================================"
             )
-            print("APPROVED USER STORIES")
+
+
+            print(
+                "APPROVED USER STORIES"
+            )
+
+
             print(
                 "========================================"
             )
+
 
             for story in final_stories:
 
@@ -468,26 +874,68 @@ def generate_and_validate_user_stories(
                     f'{story["title"]}'
                 )
 
+
+            # ------------------------------------------------
+            # IMPORTANT:
+            # ALWAYS RETURN LIST
+            # ------------------------------------------------
+
             return final_stories
+
+
+        # ====================================================
+        # NO STORIES APPROVED
+        # ====================================================
 
         feedback = "\n".join(
             rejected_feedback
         )
 
+
+        if not feedback:
+
+            feedback = (
+                "No User Stories passed validation. "
+                "Generate corrected User Stories."
+            )
+
+
         print(
             "\n❌ NO USER STORIES APPROVED"
         )
 
-        print(
-            "🔄 Regeneration required."
-        )
+
+        # ====================================================
+        # REGENERATION
+        # ====================================================
+
+        if attempt < max_attempts:
+
+            print(
+                "🔄 Regeneration required."
+            )
+
+        else:
+
+            print(
+                "⛔ Maximum User Story attempts reached."
+            )
+
+
+    # ========================================================
+    # FINAL FAILURE
+    # ========================================================
 
     print(
         "\n❌ USER STORY GENERATION FAILED"
     )
 
+
     print(
         "Maximum attempts reached."
     )
 
+
+    # IMPORTANT:
+    # Return empty LIST, not None
     return []

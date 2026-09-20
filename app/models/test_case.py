@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class TestCase(BaseModel):
+
     title: str = Field(
         description="Short functional test case title"
     )

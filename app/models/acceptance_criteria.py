@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class AcceptanceCriteria(BaseModel):
+
     given: str = Field(
         description="The initial condition before the action"
     )

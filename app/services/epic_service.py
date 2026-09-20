@@ -6,6 +6,11 @@ from groq import Groq
 
 from app.models.epic import Epic
 
+
+# ============================================================
+# ENVIRONMENT / CLIENT
+# ============================================================
+
 load_dotenv()
 
 client = Groq(
@@ -21,6 +26,13 @@ def generate_epic_candidates(
     business_requirement,
     feedback=None
 ):
+    """
+    Generate one or more Epic candidates from a Business
+    Requirement.
+
+    Returns:
+        list[Epic]
+    """
 
     feedback_text = ""
 
@@ -32,13 +44,15 @@ Validator feedback:
 {feedback}
 
 Generate corrected Epic candidates.
-Do not repeat the unsupported behavior.
+
+Do not repeat the unsupported behavior identified
+in the validator feedback.
 """
 
     prompt = f"""
 You are an experienced Business Analyst.
 
-Analyze this Business Requirement:
+Analyze the following Business Requirement:
 
 {business_requirement}
 
@@ -64,7 +78,20 @@ Rules:
 7. If the requirement represents only one business
    capability, return exactly ONE Epic.
 
-8. Do not generate IDs.
+8. If the requirement contains multiple genuinely
+   distinct business capabilities, generate one Epic
+   for each capability.
+
+9. Each Epic must represent a meaningful business
+   capability.
+
+10. Do not generate IDs.
+
+11. Do not generate User Stories.
+
+12. Do not generate Acceptance Criteria.
+
+13. Do not generate Test Cases.
 
 {feedback_text}
 
@@ -94,18 +121,22 @@ Return only the structured list of Epics.
                 }
             }
         },
-        "required": ["epics"],
+        "required": [
+            "epics"
+        ],
         "additionalProperties": False
     }
 
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
+
         messages=[
             {
                 "role": "user",
                 "content": prompt
             }
         ],
+
         response_format={
             "type": "json_schema",
             "json_schema": {
@@ -114,12 +145,23 @@ Return only the structured list of Epics.
                 "strict": True
             }
         },
+
         temperature=0
     )
 
-    data = json.loads(
-        response.choices[0].message.content
-    )
+    content = response.choices[0].message.content
+
+    if not content:
+        raise ValueError(
+            "LLM returned empty Epic response."
+        )
+
+    data = json.loads(content)
+
+    if "epics" not in data:
+        raise ValueError(
+            "LLM response does not contain 'epics'."
+        )
 
     return [
         Epic.model_validate(epic)
@@ -132,14 +174,21 @@ Return only the structured list of Epics.
 # ============================================================
 
 def python_validate_epic(epic):
+    """
+    Basic deterministic validation.
+    """
 
     errors = []
 
-    if not epic.title.strip():
-        errors.append("Epic title is empty.")
+    if not epic.title or not epic.title.strip():
+        errors.append(
+            "Epic title is empty."
+        )
 
-    if not epic.description.strip():
-        errors.append("Epic description is empty.")
+    if not epic.description or not epic.description.strip():
+        errors.append(
+            "Epic description is empty."
+        )
 
     if errors:
         return False, errors
@@ -155,6 +204,10 @@ def semantic_validate_epic(
     business_requirement,
     epic
 ):
+    """
+    Validate whether the Epic is completely supported
+    by the original Business Requirement.
+    """
 
     prompt = f"""
 You are a STRICT requirements traceability validator.
@@ -202,6 +255,12 @@ STRICT RULES:
 
 7. The Epic must remain at business-capability level.
 
+8. Do not convert assumptions into requirements.
+
+9. Do not introduce new actors, conditions,
+   notifications, or system behavior unless
+   explicitly supported by the requirement.
+
 If ANY unsupported behavior exists, return FAIL.
 
 Return exactly:
@@ -215,16 +274,26 @@ FAIL: <specific reason>
 
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
+
         messages=[
             {
                 "role": "user",
                 "content": prompt
             }
         ],
+
         temperature=0
     )
 
-    return response.choices[0].message.content.strip()
+    result = (
+        response
+        .choices[0]
+        .message
+        .content
+        .strip()
+    )
+
+    return result
 
 
 # ============================================================
@@ -235,11 +304,22 @@ def is_duplicate_epic(
     epic,
     approved_epics
 ):
+    """
+    Check whether an Epic is already approved.
 
-    new_title = epic.title.strip().lower()
+    Duplicate detection is deterministic.
+    """
+
+    new_title = (
+        epic.title
+        .strip()
+        .lower()
+    )
 
     new_description = (
-        epic.description.strip().lower()
+        epic.description
+        .strip()
+        .lower()
     )
 
     for approved in approved_epics:
@@ -276,20 +356,43 @@ def generate_and_validate_epics(
     business_requirement_id="BR-001",
     max_attempts=3
 ):
+    """
+    Generate, validate and approve multiple Epics.
+
+    Returns:
+
+        [
+            {
+                "id": "EPIC-001",
+                "title": "...",
+                "description": "...",
+                "source_requirement_id": "BR-001"
+            },
+            ...
+        ]
+
+    Returns an empty list if no Epic is approved
+    after max_attempts.
+    """
 
     feedback = None
+
+    # Stores only approved Epic information.
     approved_epics = []
 
-    for attempt in range(1, max_attempts + 1):
+    for attempt in range(
+        1,
+        max_attempts + 1
+    ):
 
         print(
             f"\n===== EPIC GENERATION ATTEMPT "
             f"{attempt} ====="
         )
 
-        # ----------------------------------------------------
-        # Generate candidates
-        # ----------------------------------------------------
+        # ====================================================
+        # GENERATE CANDIDATES
+        # ====================================================
 
         try:
 
@@ -300,26 +403,38 @@ def generate_and_validate_epics(
 
         except Exception as error:
 
-            print("\n❌ EPIC GENERATION ERROR")
-            print("Error:", error)
+            print(
+                "\n❌ EPIC GENERATION ERROR"
+            )
+
+            print(
+                "Error:",
+                error
+            )
 
             feedback = (
                 "Epic generation failed. "
-                "Generate a valid structured list."
+                "Generate a valid structured list "
+                "containing at least one Epic."
             )
 
             continue
 
 
-        if not candidates:
+        # ====================================================
+        # EMPTY RESULT
+        # ====================================================
 
-            feedback = (
-                "No Epic was generated. "
-                "At least one valid Epic is required."
-            )
+        if not candidates:
 
             print(
                 "\n❌ NO EPIC CANDIDATES GENERATED"
+            )
+
+            feedback = (
+                "No Epic was generated. "
+                "Generate at least one valid Epic "
+                "directly supported by the requirement."
             )
 
             continue
@@ -331,9 +446,9 @@ def generate_and_validate_epics(
         )
 
 
-        # ----------------------------------------------------
-        # Validate EACH candidate
-        # ----------------------------------------------------
+        # ====================================================
+        # VALIDATE EACH CANDIDATE
+        # ====================================================
 
         rejected_feedback = []
 
@@ -346,16 +461,20 @@ def generate_and_validate_epics(
                 f"\n--- CANDIDATE EPIC {index} ---"
             )
 
-            print("Title:", epic.title)
+            print(
+                "Title:",
+                epic.title
+            )
+
             print(
                 "Description:",
                 epic.description
             )
 
 
-            # ----------------------------------------------
-            # Python validation
-            # ----------------------------------------------
+            # ------------------------------------------------
+            # PYTHON VALIDATION
+            # ------------------------------------------------
 
             valid, errors = (
                 python_validate_epic(epic)
@@ -368,20 +487,27 @@ def generate_and_validate_epics(
                 print(
                     "PYTHON VALIDATION: FAIL"
                 )
-                print("Reason:", reason)
 
-                rejected_feedback.append(reason)
+                print(
+                    "Reason:",
+                    reason
+                )
+
+                rejected_feedback.append(
+                    reason
+                )
 
                 continue
+
 
             print(
                 "PYTHON VALIDATION: PASS"
             )
 
 
-            # ----------------------------------------------
-            # Duplicate validation
-            # ----------------------------------------------
+            # ------------------------------------------------
+            # DUPLICATE VALIDATION
+            # ------------------------------------------------
 
             if is_duplicate_epic(
                 epic,
@@ -392,21 +518,31 @@ def generate_and_validate_epics(
                     "DUPLICATE CHECK: FAIL"
                 )
 
-                rejected_feedback.append(
+                reason = (
                     f"Duplicate Epic detected: "
                     f"{epic.title}"
                 )
 
+                print(
+                    "Reason:",
+                    reason
+                )
+
+                rejected_feedback.append(
+                    reason
+                )
+
                 continue
+
 
             print(
                 "DUPLICATE CHECK: PASS"
             )
 
 
-            # ----------------------------------------------
-            # Semantic validation
-            # ----------------------------------------------
+            # ------------------------------------------------
+            # SEMANTIC VALIDATION
+            # ------------------------------------------------
 
             try:
 
@@ -422,7 +558,11 @@ def generate_and_validate_epics(
                 print(
                     "❌ SEMANTIC VALIDATION ERROR"
                 )
-                print("Error:", error)
+
+                print(
+                    "Error:",
+                    error
+                )
 
                 rejected_feedback.append(
                     "Semantic validation failed."
@@ -434,12 +574,15 @@ def generate_and_validate_epics(
             print(
                 "SEMANTIC VALIDATION:"
             )
-            print(semantic_result)
+
+            print(
+                semantic_result
+            )
 
 
-            # ----------------------------------------------
-            # Approve
-            # ----------------------------------------------
+            # ------------------------------------------------
+            # APPROVAL
+            # ------------------------------------------------
 
             if semantic_result.startswith(
                 "PASS"
@@ -447,30 +590,38 @@ def generate_and_validate_epics(
 
                 approved_epics.append(
                     {
-                        "title": epic.title,
+                        "title":
+                            epic.title.strip(),
+
                         "description":
-                            epic.description
+                            epic.description.strip(),
+
+                        "source_requirement_id":
+                            business_requirement_id
                     }
                 )
 
-                print("✅ EPIC APPROVED")
+                print(
+                    "✅ EPIC APPROVED"
+                )
 
             else:
 
-                print("❌ EPIC REJECTED")
+                print(
+                    "❌ EPIC REJECTED"
+                )
 
                 rejected_feedback.append(
                     semantic_result
                 )
 
 
-        # ----------------------------------------------------
-        # Determine result
-        # ----------------------------------------------------
+        # ====================================================
+        # RESULT AFTER THIS ATTEMPT
+        # ====================================================
 
         if approved_epics:
 
-            # Assign IDs ONLY after validation
             final_epics = []
 
             for index, epic in enumerate(
@@ -490,9 +641,16 @@ def generate_and_validate_epics(
                             epic["description"],
 
                         "source_requirement_id":
-                            business_requirement_id
+                            epic[
+                                "source_requirement_id"
+                            ]
                     }
                 )
+
+
+            # ------------------------------------------------
+            # DISPLAY APPROVED EPICS
+            # ------------------------------------------------
 
             print(
                 "\n========================================"
@@ -506,6 +664,7 @@ def generate_and_validate_epics(
                 "========================================"
             )
 
+
             for epic in final_epics:
 
                 print(
@@ -513,16 +672,39 @@ def generate_and_validate_epics(
                     f'{epic["title"]}'
                 )
 
+                print(
+                    "Description:",
+                    epic["description"]
+                )
+
+                print(
+                    "Source Requirement:",
+                    epic[
+                        "source_requirement_id"
+                    ]
+                )
+
+
             return final_epics
 
 
-        # ----------------------------------------------------
-        # Regeneration feedback
-        # ----------------------------------------------------
+        # ====================================================
+        # REGENERATION FEEDBACK
+        # ====================================================
 
-        feedback = "\n".join(
-            rejected_feedback
-        )
+        if rejected_feedback:
+
+            feedback = "\n".join(
+                rejected_feedback
+            )
+
+        else:
+
+            feedback = (
+                "No valid Epic was approved. "
+                "Generate corrected Epic candidates."
+            )
+
 
         print(
             "\n❌ NO EPICS APPROVED"
@@ -533,6 +715,10 @@ def generate_and_validate_epics(
         )
 
 
+    # ========================================================
+    # MAXIMUM ATTEMPTS REACHED
+    # ========================================================
+
     print(
         "\n❌ EPIC GENERATION FAILED"
     )
@@ -542,3 +728,38 @@ def generate_and_validate_epics(
     )
 
     return []
+
+
+# ============================================================
+# BACKWARD-COMPATIBILITY WRAPPER
+# ============================================================
+
+def generate_and_validate_epic(
+    business_requirement,
+    business_requirement_id="BR-001",
+    max_attempts=3
+):
+    """
+    Compatibility wrapper for older pipeline code.
+
+    If the old pipeline expects ONE Epic, this function
+    returns the first approved Epic.
+
+    New pipeline code should use:
+
+        generate_and_validate_epics()
+
+    because the project supports multiple Epics.
+    """
+
+    epics = generate_and_validate_epics(
+        business_requirement,
+        business_requirement_id=
+            business_requirement_id,
+        max_attempts=max_attempts
+    )
+
+    if not epics:
+        return None
+
+    return epics[0]

@@ -6,6 +6,11 @@ from groq import Groq
 
 from app.models.test_case import TestCase
 
+
+# ============================================================
+# ENVIRONMENT / LLM CLIENT
+# ============================================================
+
 load_dotenv()
 
 client = Groq(
@@ -14,48 +19,67 @@ client = Groq(
 
 
 # ============================================================
-# GENERATE TEST CASE
+# GENERATE TEST CASE CANDIDATES
 # ============================================================
 
-def generate_test_case(
+def generate_test_case_candidates(
     business_requirement,
     approved_epic,
     approved_user_story,
     approved_ac,
-    feedback=None
+    feedback=None,
+    number_of_test_cases=3
 ):
 
     feedback_text = ""
 
     if feedback:
         feedback_text = f"""
-The previous Test Case failed validation.
+Previous Test Case candidates failed validation.
 
 Validator feedback:
+
 {feedback}
 
-Generate a corrected Test Case.
-Do not repeat the identified problem.
+Generate corrected Test Cases.
+Do not repeat the identified problems.
 """
 
     prompt = f"""
-You are an experienced QA engineer.
+You are an experienced QA engineer and SDLC analyst.
 
-Generate ONE functional Test Case for the
-APPROVED Acceptance Criterion.
+Your task is to generate functional Test Case candidates
+for the APPROVED Acceptance Criterion.
 
-Original Business Requirement:
+==============================
+ORIGINAL BUSINESS REQUIREMENT
+==============================
+
 {business_requirement}
 
-Approved Epic:
+==============================
+APPROVED EPIC
+==============================
+
+Title:
 {approved_epic["title"]}
+
+Description:
 {approved_epic["description"]}
 
-Approved User Story:
+==============================
+APPROVED USER STORY
+==============================
+
+Title:
 {approved_user_story["title"]}
+
+Story:
 {approved_user_story["story"]}
 
-Approved Acceptance Criterion:
+==============================
+APPROVED ACCEPTANCE CRITERION
+==============================
 
 Given:
 {approved_ac["given"]}
@@ -66,93 +90,196 @@ When:
 Then:
 {approved_ac["then"]}
 
-Rules:
+==============================
+TASK
+==============================
+
+Generate UP TO {number_of_test_cases} distinct functional
+Test Case candidates.
+
+The number {number_of_test_cases} is a MAXIMUM.
+
+Do NOT create additional Test Cases merely to reach
+the requested number.
+
+If the Acceptance Criterion supports only one valid
+Test Case, generate only one.
+
+==============================
+TEST CASE STRUCTURE
+==============================
+
+Each Test Case must contain:
+
+1. Title
+2. Precondition
+3. Steps
+4. Expected Result
+
+==============================
+TRACEABILITY RULES
+==============================
 
 1. The Test Case must directly verify the
    Acceptance Criterion.
 
-2. The precondition must be based on Given.
+2. Precondition must be derived from Given.
 
-3. The test steps must represent the action
-   described by When.
+3. Steps must perform the action represented by When.
 
-4. The expected result must verify Then.
+4. Expected Result must verify Then.
 
 5. The Test Case must remain consistent with
-   the User Story, Epic, and Business Requirement.
+   the approved User Story.
 
-6. Do not introduce unsupported business behavior.
+6. The Test Case must remain consistent with
+   the approved Epic.
 
-7. Do not invent:
-   - password reset pages
-   - emails
-   - reset links
-   - verification codes
-   - security rules
-   - expiration times
-   - database behavior
-   - APIs
-   - technical implementation details
+7. The Test Case must remain supported by the
+   original Business Requirement.
 
-8. Do not generate IDs.
+==============================
+STRICT GROUNDING RULES
+==============================
+
+Do NOT introduce unsupported business behavior.
+
+Do NOT assume common industry behavior.
+
+Do NOT invent:
+
+- password reset pages
+- login pages
+- buttons
+- forms
+- UI screens
+- emails
+- reset links
+- verification codes
+- security rules
+- expiration times
+- account verification
+- database behavior
+- APIs
+- backend implementation
+- frontend implementation
+- technical architecture
+- infrastructure details
+
+Do not assume a UI or technical implementation unless
+it is explicitly supported by the approved artifacts.
+
+Do not create negative scenarios unless they are directly
+supported by the Acceptance Criterion or original
+Business Requirement.
+
+Do not generate IDs.
+
+Do not generate duplicate or equivalent Test Cases.
+
+Prefer fewer valid Test Cases over unsupported
+Test Cases.
+
+==============================
+IMPORTANT
+==============================
+
+The Acceptance Criterion is the immediate source of truth
+for the Test Case.
+
+The User Story and Epic provide additional traceability
+context.
+
+The original Business Requirement is the ultimate source
+for business behavior.
 
 {feedback_text}
 
-Return only the structured Test Case.
+Return only the structured Test Case list.
 """
 
     schema = {
         "type": "object",
         "properties": {
-            "title": {
-                "type": "string"
-            },
-            "precondition": {
-                "type": "string"
-            },
-            "steps": {
+            "test_cases": {
                 "type": "array",
                 "items": {
-                    "type": "string"
-                }
-            },
-            "expected_result": {
-                "type": "string"
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string"
+                        },
+                        "precondition": {
+                            "type": "string"
+                        },
+                        "steps": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "expected_result": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "title",
+                        "precondition",
+                        "steps",
+                        "expected_result"
+                    ],
+                    "additionalProperties": False
+                },
+                "minItems": 1,
+                "maxItems": 5
             }
         },
         "required": [
-            "title",
-            "precondition",
-            "steps",
-            "expected_result"
+            "test_cases"
         ],
         "additionalProperties": False
     }
 
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
+
         messages=[
             {
                 "role": "user",
                 "content": prompt
             }
         ],
+
         response_format={
             "type": "json_schema",
             "json_schema": {
-                "name": "functional_test_case",
+                "name": "functional_test_cases",
                 "schema": schema,
                 "strict": True
             }
         },
+
         temperature=0
     )
 
-    data = json.loads(
-        response.choices[0].message.content
-    )
+    content = response.choices[0].message.content
 
-    return TestCase.model_validate(data)
+    if not content:
+        raise ValueError(
+            "LLM returned an empty response."
+        )
+
+    data = json.loads(content)
+
+    validated_test_cases = []
+
+    for item in data["test_cases"]:
+
+        test_case = TestCase.model_validate(item)
+
+        validated_test_cases.append(test_case)
+
+    return validated_test_cases
 
 
 # ============================================================
@@ -163,31 +290,110 @@ def python_validate_test_case(test_case):
 
     errors = []
 
+    # --------------------------------------------------------
+    # Title
+    # --------------------------------------------------------
+
     if not test_case.title.strip():
-        errors.append("Test Case title is empty.")
+        errors.append(
+            "Test Case title is empty."
+        )
+
+    # --------------------------------------------------------
+    # Precondition
+    # --------------------------------------------------------
 
     if not test_case.precondition.strip():
-        errors.append("Precondition is empty.")
+        errors.append(
+            "Precondition is empty."
+        )
+
+    # --------------------------------------------------------
+    # Steps
+    # --------------------------------------------------------
 
     if not test_case.steps:
+
         errors.append(
             "Test Case must contain at least one step."
         )
 
-    if any(not step.strip() for step in test_case.steps):
-        errors.append(
-            "Test Case contains an empty step."
-        )
+    else:
+
+        if any(
+            not isinstance(step, str)
+            or not step.strip()
+            for step in test_case.steps
+        ):
+
+            errors.append(
+                "Test Case contains an empty step."
+            )
+
+    # --------------------------------------------------------
+    # Expected Result
+    # --------------------------------------------------------
 
     if not test_case.expected_result.strip():
+
         errors.append(
             "Expected result is empty."
         )
+
+    # --------------------------------------------------------
+    # Result
+    # --------------------------------------------------------
 
     if errors:
         return False, errors
 
     return True, []
+
+
+# ============================================================
+# DUPLICATE CHECK
+# ============================================================
+
+def is_duplicate_test_case(
+    test_case,
+    approved_test_cases
+):
+
+    current = (
+        test_case.title.strip().lower(),
+
+        test_case.precondition.strip().lower(),
+
+        tuple(
+            step.strip().lower()
+            for step in test_case.steps
+        ),
+
+        test_case.expected_result.strip().lower()
+    )
+
+    for existing in approved_test_cases:
+
+        existing_value = (
+            existing["title"].strip().lower(),
+
+            existing["precondition"].strip().lower(),
+
+            tuple(
+                step.strip().lower()
+                for step in existing["steps"]
+            ),
+
+            existing["expected_result"]
+            .strip()
+            .lower()
+        )
+
+        if current == existing_value:
+
+            return True
+
+    return False
 
 
 # ============================================================
@@ -218,14 +424,20 @@ BUSINESS REQUIREMENT
 APPROVED EPIC
 ==============================
 
+Title:
 {approved_epic["title"]}
+
+Description:
 {approved_epic["description"]}
 
 ==============================
 APPROVED USER STORY
 ==============================
 
+Title:
 {approved_user_story["title"]}
+
+Story:
 {approved_user_story["story"]}
 
 ==============================
@@ -258,7 +470,7 @@ Expected Result:
 {test_case.expected_result}
 
 ==============================
-STRICT RULES
+VALIDATION RULES
 ==============================
 
 1. The Test Case must directly test the
@@ -266,8 +478,8 @@ STRICT RULES
 
 2. Precondition must be consistent with Given.
 
-3. Test steps must actually perform the
-   action described by When.
+3. Test Steps must perform the action represented
+   by When.
 
 4. Expected Result must verify Then.
 
@@ -280,27 +492,47 @@ STRICT RULES
 7. The Test Case must remain supported by the
    original Business Requirement.
 
-8. Do not accept behavior simply because it is
-   common in real-world password-reset systems.
+8. Do not accept behavior merely because it is
+   common in real-world systems.
 
 9. Reject unsupported assumptions such as:
+
    - password reset pages
-   - email sending
+   - login pages
+   - buttons
+   - forms
+   - UI screens
+   - emails
    - reset links
    - verification codes
    - security policies
    - expiration times
+   - account verification
    - database operations
    - APIs
-   - technical implementation details
+   - backend implementation
+   - frontend implementation
+   - technical implementation
 
 10. Every business behavior introduced by the
     Test Case must be supported by the approved
-    source artifacts.
+    Acceptance Criterion and source artifacts.
+
+11. Do not infer requirements that are not present
+    in the source artifacts.
+
+12. Do not introduce a new business workflow.
+
+13. Do not introduce unsupported negative scenarios.
+
+14. If ANY unsupported behavior exists,
+    return FAIL.
 
 Be STRICT.
 
-If ANY unsupported behavior exists, return FAIL.
+==============================
+OUTPUT
+==============================
 
 Return exactly:
 
@@ -313,23 +545,32 @@ FAIL: <specific reason>
 
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
+
         messages=[
             {
                 "role": "user",
                 "content": validation_prompt
             }
         ],
+
         temperature=0
     )
 
-    return response.choices[0].message.content.strip()
+    result = response.choices[0].message.content
+
+    if not result:
+        raise ValueError(
+            "Semantic validator returned an empty response."
+        )
+
+    return result.strip()
 
 
 # ============================================================
-# GENERATE + VALIDATE
+# GENERATE + VALIDATE TEST CASES
 # ============================================================
 
-def generate_and_validate_test_case(
+def generate_and_validate_test_cases(
     business_requirement,
     approved_epic,
     approved_user_story,
@@ -338,33 +579,103 @@ def generate_and_validate_test_case(
     epic_id="EPIC-001",
     user_story_id="US-001",
     acceptance_criteria_id="AC-001",
+    number_of_test_cases=3,
     max_attempts=3
 ):
 
+    approved_test_cases = []
+
     feedback = None
 
-    for attempt in range(1, max_attempts + 1):
+    # ========================================================
+    # GENERATION / REGENERATION LOOP
+    # ========================================================
+
+    for attempt in range(
+        1,
+        max_attempts + 1
+    ):
 
         print(
-            f"\n===== TEST CASE ATTEMPT {attempt} ====="
+            f"\n===== TEST CASE GENERATION "
+            f"ATTEMPT {attempt} ====="
         )
 
         # ----------------------------------------------------
-        # Generation
+        # GENERATE
         # ----------------------------------------------------
 
         try:
 
-            test_case = generate_test_case(
-                business_requirement,
-                approved_epic,
-                approved_user_story,
-                approved_ac,
-                feedback
+            generated_test_cases = (
+                generate_test_case_candidates(
+                    business_requirement,
+                    approved_epic,
+                    approved_user_story,
+                    approved_ac,
+                    feedback,
+                    number_of_test_cases
+                )
             )
 
-            print("\nGENERATED TEST CASE")
-            print("Title:", test_case.title)
+        except Exception as error:
+
+            print(
+                "\n❌ TEST CASE GENERATION ERROR"
+            )
+
+            print(
+                "Error:",
+                error
+            )
+
+            feedback = (
+                "Test Case generation failed. "
+                "Generate a valid structured Test Case list."
+            )
+
+            continue
+
+        if not generated_test_cases:
+
+            print(
+                "\n❌ NO TEST CASE CANDIDATES GENERATED"
+            )
+
+            feedback = (
+                "No Test Cases were generated. "
+                "Generate at least one valid Test Case."
+            )
+
+            continue
+
+        print(
+            f"\nGenerated "
+            f"{len(generated_test_cases)} "
+            f"Test Case candidate(s)"
+        )
+
+        rejected_feedback = []
+
+        # ----------------------------------------------------
+        # VALIDATE EACH CANDIDATE
+        # ----------------------------------------------------
+
+        for index, test_case in enumerate(
+            generated_test_cases,
+            start=1
+        ):
+
+            print(
+                f"\n--- TEST CASE CANDIDATE "
+                f"{index} ---"
+            )
+
+            print(
+                "Title:",
+                test_case.title
+            )
+
             print(
                 "Precondition:",
                 test_case.precondition
@@ -376,121 +687,313 @@ def generate_and_validate_test_case(
                 test_case.steps,
                 start=1
             ):
-                print(f"{number}. {step}")
+
+                print(
+                    f"{number}. {step}"
+                )
 
             print(
                 "Expected Result:",
                 test_case.expected_result
             )
 
-        except Exception as error:
+            # =================================================
+            # PYTHON VALIDATION
+            # =================================================
 
-            print("\n❌ TEST CASE GENERATION ERROR")
-            print("Error:", error)
-
-            feedback = (
-                "Previous generation failed because "
-                "of an LLM error. Generate a valid "
-                "structured Test Case."
-            )
-
-            continue
-
-
-        # ----------------------------------------------------
-        # Python validation
-        # ----------------------------------------------------
-
-        valid, errors = python_validate_test_case(
-            test_case
-        )
-
-        if not valid:
-
-            feedback = "; ".join(errors)
-
-            print("\nPYTHON VALIDATION: FAIL")
-            print("Reason:", feedback)
-
-            continue
-
-        print("\nPYTHON VALIDATION: PASS")
-
-
-        # ----------------------------------------------------
-        # Semantic validation
-        # ----------------------------------------------------
-
-        try:
-
-            semantic_result = (
-                semantic_validate_test_case(
-                    business_requirement,
-                    approved_epic,
-                    approved_user_story,
-                    approved_ac,
+            valid, errors = (
+                python_validate_test_case(
                     test_case
                 )
             )
 
-        except Exception as error:
+            if not valid:
+
+                reason = "; ".join(errors)
+
+                print(
+                    "\nPYTHON VALIDATION: FAIL"
+                )
+
+                print(
+                    "Reason:",
+                    reason
+                )
+
+                rejected_feedback.append(
+                    reason
+                )
+
+                continue
 
             print(
-                "\n❌ SEMANTIC VALIDATION ERROR"
-            )
-            print("Error:", error)
-
-            feedback = (
-                "Semantic validation failed because "
-                "of an LLM error. Regenerate the "
-                "Test Case."
+                "\nPYTHON VALIDATION: PASS"
             )
 
-            continue
+            # =================================================
+            # DUPLICATE CHECK
+            # =================================================
 
+            if is_duplicate_test_case(
+                test_case,
+                approved_test_cases
+            ):
 
-        print("\nSEMANTIC VALIDATION:")
-        print(semantic_result)
+                reason = (
+                    "Equivalent Test Case "
+                    "already approved."
+                )
 
+                print(
+                    "\nDUPLICATE CHECK: FAIL"
+                )
 
-        # ----------------------------------------------------
-        # Approval
-        # ----------------------------------------------------
+                print(
+                    "Reason:",
+                    reason
+                )
 
-        if semantic_result.startswith("PASS"):
+                rejected_feedback.append(
+                    reason
+                )
 
-            approved_test_case = {
-                "id": "TC-001",
-                "title": test_case.title,
-                "precondition":
-                    test_case.precondition,
-                "steps":
-                    test_case.steps,
-                "expected_result":
-                    test_case.expected_result,
-                "parent_acceptance_criteria_id":
-                    acceptance_criteria_id,
-                "parent_story_id":
-                    user_story_id,
-                "parent_epic_id":
-                    epic_id,
-                "source_requirement_id":
-                    business_requirement_id
-            }
+                continue
 
-            print("\n✅ TEST CASE APPROVED")
+            print(
+                "\nDUPLICATE CHECK: PASS"
+            )
 
-            return approved_test_case
+            # =================================================
+            # SEMANTIC VALIDATION
+            # =================================================
+
+            try:
+
+                semantic_result = (
+                    semantic_validate_test_case(
+                        business_requirement,
+                        approved_epic,
+                        approved_user_story,
+                        approved_ac,
+                        test_case
+                    )
+                )
+
+            except Exception as error:
+
+                print(
+                    "\n❌ SEMANTIC "
+                    "VALIDATION ERROR"
+                )
+
+                print(
+                    "Error:",
+                    error
+                )
+
+                rejected_feedback.append(
+                    "Semantic validation failed."
+                )
+
+                continue
+
+            print(
+                "\nSEMANTIC VALIDATION:"
+            )
+
+            print(
+                semantic_result
+            )
+
+            # =================================================
+            # APPROVAL
+            # =================================================
+
+            if semantic_result.startswith("PASS"):
+
+                tc_id = (
+                    f"TC-"
+                    f"{len(approved_test_cases) + 1:03d}"
+                )
+
+                approved_test_case = {
+
+                    "id":
+                        tc_id,
+
+                    "title":
+                        test_case.title,
+
+                    "precondition":
+                        test_case.precondition,
+
+                    "steps":
+                        test_case.steps,
+
+                    "expected_result":
+                        test_case.expected_result,
+
+                    "parent_acceptance_criteria_id":
+                        acceptance_criteria_id,
+
+                    "parent_story_id":
+                        user_story_id,
+
+                    "parent_epic_id":
+                        epic_id,
+
+                    "source_requirement_id":
+                        business_requirement_id
+                }
+
+                approved_test_cases.append(
+                    approved_test_case
+                )
+
+                print(
+                    f"\n✅ TEST CASE APPROVED: "
+                    f"{tc_id}"
+                )
+
+            else:
+
+                print(
+                    "\n❌ TEST CASE REJECTED"
+                )
+
+                rejected_feedback.append(
+                    semantic_result
+                )
+
+        # ====================================================
+        # SUCCESS
+        # ====================================================
+
+        if approved_test_cases:
+
+            print(
+                "\n✅ At least one valid "
+                "Test Case approved."
+            )
+
+            break
+
+        # ====================================================
+        # REGENERATION FEEDBACK
+        # ====================================================
+
+        if rejected_feedback:
+
+            feedback = "\n".join(
+                rejected_feedback
+            )
 
         else:
 
-            feedback = semantic_result
+            feedback = (
+                "All generated Test Cases were rejected. "
+                "Generate new Test Cases strictly grounded "
+                "in the approved Acceptance Criterion."
+            )
 
-            print("\n❌ TEST CASE REJECTED")
-            print("🔄 Regeneration required.")
+        if attempt < max_attempts:
 
+            print(
+                "\n🔄 Additional Test Case "
+                "generation required."
+            )
 
-    print("\n❌ TEST CASE GENERATION FAILED")
-    print("Maximum attempts reached.")
+    # ========================================================
+    # FINAL RESULT
+    # ========================================================
 
-    return None
+    if not approved_test_cases:
+
+        print(
+            "\n❌ NO TEST CASES APPROVED"
+        )
+
+        print(
+            f"Maximum attempts reached: "
+            f"{max_attempts}"
+        )
+
+        return []
+
+    # ========================================================
+    # FINAL APPROVED TEST CASES
+    # ========================================================
+
+    print(
+        "\n========================================"
+    )
+
+    print(
+        "APPROVED TEST CASES"
+    )
+
+    print(
+        "========================================"
+    )
+
+    for tc in approved_test_cases:
+
+        print(
+            f"\nID: {tc['id']}"
+        )
+
+        print(
+            "Title:",
+            tc["title"]
+        )
+
+        print(
+            "Precondition:",
+            tc["precondition"]
+        )
+
+        print("Steps:")
+
+        for number, step in enumerate(
+            tc["steps"],
+            start=1
+        ):
+
+            print(
+                f"{number}. {step}"
+            )
+
+        print(
+            "Expected Result:",
+            tc["expected_result"]
+        )
+
+        print(
+            "Parent Acceptance Criteria:",
+            tc[
+                "parent_acceptance_criteria_id"
+            ]
+        )
+
+        print(
+            "Parent Story:",
+            tc[
+                "parent_story_id"
+            ]
+        )
+
+        print(
+            "Parent Epic:",
+            tc[
+                "parent_epic_id"
+            ]
+        )
+
+        print(
+            "Source Requirement:",
+            tc[
+                "source_requirement_id"
+            ]
+        )
+
+    return approved_test_cases
