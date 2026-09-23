@@ -1,0 +1,58 @@
+[[theme.fontFaces]]
+family = "Inter Tight"
+url = "https://fonts.gstatic.com/s/intertight/v9/NGSwv5HMAFg6IuGlBNMjxLsH8ahuQ2e8.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter Tight"
+url = "https://fonts.gstatic.com/s/intertight/v9/NGSwv5HMAFg6IuGlBNMjxLsH8ahuQ2e8.woff2"
+weight = 500
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter Tight"
+url = "https://fonts.gstatic.com/s/intertight/v9/NGSwv5HMAFg6IuGlBNMjxLsH8ahuQ2e8.woff2"
+weight = 600
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter Tight"
+url = "https://fonts.gstatic.com/s/intertight/v9/NGSwv5HMAFg6IuGlBNMjxLsH8ahuQ2e8.woff2"
+weight = 700
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter Tight"
+url = "https://fonts.gstatic.com/s/intertight/v9/NGSwv5HMAFg6IuGlBNMjxLsH8ahuQ2e8.woff2"
+weight = 800
+style = "normal"
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url = "https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwgknk-4.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url = "https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwgknk-4.woff2"
+weight = 700
+style = "normal"
+
+[theme]
+base = "light"
+primaryColor = "#7c3aed"
+backgroundColor = "#f7f1e3"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#221a0e"
+font = "Inter Tight"
+headingFont = "Inter Tight"
+codeFont = "JetBrains Mono"
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = true
+
+[server]
+headless = true
