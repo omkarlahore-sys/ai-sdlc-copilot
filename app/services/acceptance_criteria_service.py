@@ -19,6 +19,21 @@ client = Groq(
 
 
 # ============================================================
+# HELPER
+# ============================================================
+
+def safe_text(value):
+    """
+    Safely convert any value to clean text.
+    """
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+# ============================================================
 # GENERATE ACCEPTANCE CRITERIA CANDIDATES
 # ============================================================
 
@@ -29,37 +44,56 @@ def generate_acceptance_criteria(
     feedback=None,
     number_of_criteria=3
 ):
+    """
+    Generate Acceptance Criteria candidates.
+
+    Maximum number of criteria is controlled by
+    number_of_criteria.
+    """
+
+    # --------------------------------------------------------
+    # Feedback
+    # --------------------------------------------------------
 
     feedback_text = ""
 
     if feedback:
 
         feedback_text = f"""
-Previous Acceptance Criteria were rejected during validation.
+============================================================
+PREVIOUS VALIDATION FEEDBACK
+============================================================
 
-VALIDATOR FEEDBACK:
+The previous Acceptance Criteria were rejected.
+
+Fix ONLY the problems identified below.
+
 {feedback}
 
-Generate corrected Acceptance Criteria.
-
 IMPORTANT:
-- Do not repeat the rejected unsupported behavior.
-- Preserve all behavior that is explicitly stated in the
-  ORIGINAL BUSINESS REQUIREMENT.
-- Do not remove an explicitly required business outcome.
+- Do not repeat rejected behavior.
+- Do not invent new requirements.
+- Preserve explicitly stated business behavior.
 - Generate fewer criteria if fewer are supported.
-- Do not invent additional behavior.
+- Do not force the maximum number.
 """
+
+
+    # --------------------------------------------------------
+    # Prompt
+    # --------------------------------------------------------
 
     prompt = f"""
 You are an experienced Agile Business Analyst.
+
+Your task is to generate Acceptance Criteria for ONE
+approved User Story.
 
 ============================================================
 ORIGINAL BUSINESS REQUIREMENT
 ============================================================
 
 {business_requirement}
-
 
 ============================================================
 APPROVED EPIC
@@ -71,7 +105,6 @@ Title:
 Description:
 {approved_epic["description"]}
 
-
 ============================================================
 APPROVED USER STORY
 ============================================================
@@ -82,98 +115,83 @@ Title:
 Story:
 {approved_user_story["story"]}
 
-
 ============================================================
 TASK
 ============================================================
 
-Generate up to {number_of_criteria} DISTINCT Acceptance
+Generate UP TO {number_of_criteria} distinct Acceptance
 Criteria for the approved User Story.
 
-{number_of_criteria} is the MAXIMUM number.
+{number_of_criteria} is the MAXIMUM.
 
-It is NOT necessary to generate exactly {number_of_criteria}.
+You do NOT need to generate exactly {number_of_criteria}.
 
-If only one valid Acceptance Criterion is supported,
-generate one.
+If only one valid criterion is supported, generate one.
 
-If two are supported, generate two.
+If two valid criteria are supported, generate two.
 
-NEVER invent additional behavior just to reach the maximum.
-
+NEVER invent behavior simply to reach the maximum.
 
 ============================================================
 ACCEPTANCE CRITERION FORMAT
 ============================================================
 
-Every criterion MUST contain:
+Each Acceptance Criterion MUST contain:
 
 Given:
-Initial condition.
+Initial business condition.
 
 When:
-User action or event.
+Business action or event.
 
 Then:
 Expected business outcome.
 
-
 ============================================================
-IMPORTANT TRACEABILITY RULE
+TRACEABILITY
 ============================================================
 
-The ORIGINAL BUSINESS REQUIREMENT is the highest authority.
+The ORIGINAL BUSINESS REQUIREMENT is the ultimate
+source of truth.
 
-The Epic and User Story provide context, but they must NOT
-introduce new business behavior.
+The Epic and User Story provide context only.
 
-An Acceptance Criterion is valid when its behavior is:
+They MUST NOT introduce new business behavior.
+
+Every business behavior in the Acceptance Criterion
+must be:
 
 1. Explicitly stated in the Business Requirement, OR
-2. A direct logical restatement of behavior explicitly stated
-   in the Business Requirement.
+2. A direct logical restatement of behavior explicitly
+   stated in the Business Requirement.
 
-Do NOT reject behavior merely because the BR does not use the
-exact same wording.
+Different wording is allowed.
 
-For example:
-
-If the BR says:
-"the customer receives an order confirmation"
-
-Then an AC saying:
-"the customer receives an order confirmation"
-
-is VALID.
-
-Do NOT reject it as a "confirmation message" because the
-confirmation itself is explicitly required by the BR.
-
+Do NOT reject valid behavior merely because the wording
+differs from the Business Requirement.
 
 ============================================================
 STRICT RULES
 ============================================================
 
-1. The AC must directly validate the User Story.
+1. Every AC must directly validate the User Story.
 
-2. The AC must logically belong to the Epic.
+2. Every AC must logically belong to the Epic.
 
 3. Every business behavior must be traceable to the
-   ORIGINAL BUSINESS REQUIREMENT.
+   Original Business Requirement.
 
-4. The User Story and Epic cannot introduce new requirements.
+4. Do NOT infer missing requirements.
 
-5. Do NOT infer missing requirements.
+5. Do NOT use common industry practices as evidence.
 
-6. Do NOT use common industry practices as evidence.
-
-7. Do NOT invent:
+6. Do NOT invent:
 
    - email sending
    - reset links
    - verification codes
    - OTP
-   - security rules
+   - security requirements
    - expiration times
    - account verification
    - database behavior
@@ -186,40 +204,44 @@ STRICT RULES
    - technical error handling
    - unsupported error messages
 
-8. However, if any of the above behavior is explicitly stated
-   in the ORIGINAL BUSINESS REQUIREMENT, it IS allowed.
+7. If any of the above behavior is explicitly stated in
+   the Original Business Requirement, it IS allowed.
 
-9. Do not create negative scenarios unless explicitly supported
-   by the original requirement.
+8. Do not create unsupported negative scenarios.
 
-10. Do not create implementation details.
+9. Do not create implementation details.
 
-11. Do not generate IDs.
+10. Do not generate IDs.
 
-12. Do not generate duplicate or equivalent criteria.
+11. Do not generate duplicate or equivalent criteria.
 
-13. Prefer fewer valid criteria rather than unsupported ones.
+12. Prefer fewer valid criteria over unsupported criteria.
 
-14. Do not expand the requirement.
+13. Do not expand the requirement.
 
-15. Preserve explicitly stated business outcomes.
+14. Preserve explicitly stated business outcomes.
 
-16. Every Given, When and Then statement must be traceable to
-    the original Business Requirement.
+15. Every Given, When and Then statement must be
+    traceable to the Business Requirement.
 
-17. Do not reject an AC simply because it uses different wording
-    from the BR.
+16. Do not reject an AC merely because it uses different
+    natural language.
 
-18. If the BR explicitly requires a confirmation, notification,
-    order creation, payment processing, status update, etc.,
-    that behavior is allowed.
+17. If the Business Requirement explicitly requires:
 
-19. Do not confuse a business outcome with an implementation
-    detail.
+    - confirmation
+    - notification
+    - order creation
+    - payment processing
+    - status update
+    - delivery update
 
+    then that behavior is allowed.
+
+18. The Acceptance Criterion must describe a BUSINESS
+    OUTCOME, not a technical implementation.
 
 {feedback_text}
-
 
 ============================================================
 OUTPUT
@@ -228,6 +250,10 @@ OUTPUT
 Return ONLY the structured Acceptance Criteria list.
 """
 
+
+    # --------------------------------------------------------
+    # JSON Schema
+    # --------------------------------------------------------
 
     schema = {
 
@@ -281,6 +307,10 @@ Return ONLY the structured Acceptance Criteria list.
     }
 
 
+    # --------------------------------------------------------
+    # LLM CALL
+    # --------------------------------------------------------
+
     response = client.chat.completions.create(
 
         model="openai/gpt-oss-120b",
@@ -309,12 +339,79 @@ Return ONLY the structured Acceptance Criteria list.
     )
 
 
-    data = json.loads(
-        response.choices[0].message.content
-    )
+    # --------------------------------------------------------
+    # SAFE RESPONSE HANDLING
+    # --------------------------------------------------------
 
+    if not response:
+
+        raise ValueError(
+            "LLM returned no response."
+        )
+
+
+    if not response.choices:
+
+        raise ValueError(
+            "LLM returned no choices."
+        )
+
+
+    message = response.choices[0].message
+
+    content = message.content
+
+
+    if not content:
+
+        raise ValueError(
+            "LLM returned an empty Acceptance Criteria response."
+        )
+
+
+    # --------------------------------------------------------
+    # JSON PARSING
+    # --------------------------------------------------------
+
+    try:
+
+        data = json.loads(content)
+
+    except json.JSONDecodeError as error:
+
+        raise ValueError(
+            f"Invalid JSON returned by LLM: {error}"
+        )
+
+
+    if not isinstance(data, dict):
+
+        raise ValueError(
+            "LLM response is not a JSON object."
+        )
+
+
+    if "acceptance_criteria" not in data:
+
+        raise ValueError(
+            "LLM response does not contain "
+            "'acceptance_criteria'."
+        )
+
+
+    if not data["acceptance_criteria"]:
+
+        raise ValueError(
+            "LLM returned an empty Acceptance Criteria list."
+        )
+
+
+    # --------------------------------------------------------
+    # PYDANTIC VALIDATION
+    # --------------------------------------------------------
 
     validated_criteria = []
+
 
     for item in data["acceptance_criteria"]:
 
@@ -334,27 +431,48 @@ def python_validate_acceptance_criteria(ac):
 
     errors = []
 
-    if not ac.given.strip():
+
+    # --------------------------------------------------------
+    # Given
+    # --------------------------------------------------------
+
+    if not safe_text(ac.given):
 
         errors.append(
             "Given is empty."
         )
 
-    if not ac.when.strip():
+
+    # --------------------------------------------------------
+    # When
+    # --------------------------------------------------------
+
+    if not safe_text(ac.when):
 
         errors.append(
             "When is empty."
         )
 
-    if not ac.then.strip():
+
+    # --------------------------------------------------------
+    # Then
+    # --------------------------------------------------------
+
+    if not safe_text(ac.then):
 
         errors.append(
             "Then is empty."
         )
 
+
+    # --------------------------------------------------------
+    # Result
+    # --------------------------------------------------------
+
     if errors:
 
         return False, errors
+
 
     return True, []
 
@@ -370,33 +488,36 @@ def is_duplicate_acceptance_criteria(
 
     current = (
 
-        ac.given.strip().lower(),
+        safe_text(ac.given).lower(),
 
-        ac.when.strip().lower(),
+        safe_text(ac.when).lower(),
 
-        ac.then.strip().lower()
+        safe_text(ac.then).lower()
     )
+
 
     for existing in approved_criteria:
 
         existing_tuple = (
 
-            existing["given"]
-            .strip()
-            .lower(),
+            safe_text(
+                existing["given"]
+            ).lower(),
 
-            existing["when"]
-            .strip()
-            .lower(),
+            safe_text(
+                existing["when"]
+            ).lower(),
 
-            existing["then"]
-            .strip()
-            .lower()
+            safe_text(
+                existing["then"]
+            ).lower()
         )
+
 
         if current == existing_tuple:
 
             return True
+
 
     return False
 
@@ -411,20 +532,31 @@ def semantic_validate_acceptance_criteria(
     approved_user_story,
     ac
 ):
+    """
+    LLM-based semantic traceability validation.
+
+    Returns:
+
+        PASS
+
+    OR
+
+        FAIL: reason
+    """
 
     validation_prompt = f"""
-You are a STRICT but FAIR requirements traceability validator.
+You are a STRICT but FAIR SDLC requirements
+traceability validator.
 
-Your task is to determine whether the Acceptance Criterion is
-supported by the ORIGINAL BUSINESS REQUIREMENT.
-
+Your task is to determine whether the Acceptance
+Criterion is supported by the ORIGINAL BUSINESS
+REQUIREMENT.
 
 ============================================================
 ORIGINAL BUSINESS REQUIREMENT
 ============================================================
 
 {business_requirement}
-
 
 ============================================================
 APPROVED EPIC
@@ -436,7 +568,6 @@ Title:
 Description:
 {approved_epic["description"]}
 
-
 ============================================================
 APPROVED USER STORY
 ============================================================
@@ -446,7 +577,6 @@ Title:
 
 Story:
 {approved_user_story["story"]}
-
 
 ============================================================
 ACCEPTANCE CRITERION
@@ -461,7 +591,6 @@ When:
 Then:
 {ac.then}
 
-
 ============================================================
 VALIDATION PRINCIPLE
 ============================================================
@@ -471,38 +600,17 @@ The ORIGINAL BUSINESS REQUIREMENT is the source of truth.
 The Acceptance Criterion is VALID if its behavior is:
 
 - explicitly stated in the BR, OR
-- a direct logical restatement of behavior explicitly stated
-  in the BR.
+- a direct logical restatement of behavior explicitly
+  stated in the BR.
 
-The AC does NOT need to use exactly the same words as the BR.
+The AC does NOT need to use exactly the same words
+as the BR.
 
-Do NOT reject a criterion merely because it uses different
-natural language wording.
-
-IMPORTANT:
-
-If the Business Requirement explicitly says that something
-must happen, that behavior MUST be considered supported.
-
-Example:
-
-BR:
-"After successful payment, an order is created and the
-customer receives an order confirmation."
-
-Valid AC:
-
-Given: Payment has been successfully processed.
-When: The payment process completes.
-Then: An order is created and the customer receives an
-order confirmation.
-
-The confirmation is valid because it is explicitly stated
-in the BR.
-
+Do NOT reject a valid criterion merely because it uses
+different natural language.
 
 ============================================================
-STRICT VALIDATION RULES
+STRICT RULES
 ============================================================
 
 1. The AC must directly validate the User Story.
@@ -510,15 +618,16 @@ STRICT VALIDATION RULES
 2. The AC must logically belong to the Epic.
 
 3. Every business behavior must be supported by the
-   ORIGINAL BUSINESS REQUIREMENT.
+   Original Business Requirement.
 
-4. The User Story and Epic cannot introduce new requirements.
+4. The User Story and Epic cannot introduce new
+   requirements.
 
 5. Do not infer missing requirements.
 
 6. Do not use common industry practices as evidence.
 
-7. Reject behavior that introduces unsupported:
+7. Reject unsupported:
 
    - email sending
    - reset links
@@ -537,41 +646,35 @@ STRICT VALIDATION RULES
    - technical error handling
    - unsupported error messages
 
-8. BUT:
-
-   If any of these behaviors are explicitly stated in the
-   ORIGINAL BUSINESS REQUIREMENT, they are VALID.
+8. HOWEVER, if any such behavior is explicitly stated
+   in the Original Business Requirement, it is VALID.
 
 9. Do not reject explicitly stated business outcomes.
 
-10. Do not reject confirmation or notification behavior when
-    the BR explicitly requires it.
+10. Do not reject explicitly stated notifications.
 
-11. Do not reject order creation when the BR explicitly
-    requires order creation.
+11. Do not reject explicitly stated confirmations.
 
-12. Do not reject payment processing when the BR explicitly
-    requires payment processing.
+12. Do not reject explicitly stated order creation.
 
-13. Reject unsupported negative scenarios.
+13. Do not reject explicitly stated payment processing.
 
-14. Reject unsupported workflows.
+14. Reject unsupported negative scenarios.
 
-15. Reject implementation details that are not in the BR.
+15. Reject unsupported workflows.
 
 16. Reject unnecessary expansion.
 
-17. If ANY genuinely unsupported business behavior exists,
-    return FAIL.
+17. If ANY genuinely unsupported business behavior
+    exists, return FAIL.
 
-18. If the entire AC is supported by the BR, return PASS.
-
+18. If the entire AC is supported, return PASS.
 
 ============================================================
 OUTPUT
 ============================================================
 
-Return exactly:
+Return EXACTLY one of:
 
 PASS
 
@@ -596,7 +699,62 @@ FAIL: <specific unsupported behavior and reason>
     )
 
 
-    return response.choices[0].message.content.strip()
+    # --------------------------------------------------------
+    # SAFE RESPONSE HANDLING
+    # --------------------------------------------------------
+
+    if not response:
+
+        return (
+            "FAIL: Semantic validator returned no response."
+        )
+
+
+    if not response.choices:
+
+        return (
+            "FAIL: Semantic validator returned no choices."
+        )
+
+
+    result = response.choices[0].message.content
+
+
+    # --------------------------------------------------------
+    # IMPORTANT FIX
+    # --------------------------------------------------------
+    #
+    # Previously an empty response was returned as:
+    #
+    # FAIL: Semantic validator returned an empty response.
+    #
+    # This makes the candidate fail, but does not provide
+    # useful regeneration feedback.
+    #
+    # Now we return a clean failure message.
+    #
+
+    if not result:
+
+        return (
+            "FAIL: Semantic validation produced no result. "
+            "Regenerate the Acceptance Criterion and keep "
+            "it strictly grounded in the Business Requirement."
+        )
+
+
+    result = result.strip()
+
+
+    if not result:
+
+        return (
+            "FAIL: Semantic validation produced an empty result. "
+            "Regenerate the Acceptance Criterion."
+        )
+
+
+    return result
 
 
 # ============================================================
@@ -611,16 +769,60 @@ def generate_and_validate_acceptance_criteria(
     epic_id="EPIC-001",
     user_story_id="US-001",
     number_of_criteria=3,
-    max_attempts=3
+    max_attempts=5
 ):
+    """
+    Generate and validate Acceptance Criteria.
+
+    IMPORTANT:
+
+    Default maximum attempts = 5.
+
+    The function always returns a list.
+
+    Successful result:
+        [
+            {
+                "id": "AC-001",
+                ...
+            }
+        ]
+
+    Failure:
+        []
+    """
+
+
+    # ========================================================
+    # SAFETY
+    # ========================================================
+
+    if max_attempts < 1:
+
+        max_attempts = 1
+
+
+    if number_of_criteria < 1:
+
+        number_of_criteria = 1
+
+
+    # ========================================================
+    # APPROVED CRITERIA
+    # ========================================================
 
     approved_criteria = []
+
+
+    # ========================================================
+    # FEEDBACK
+    # ========================================================
 
     feedback = None
 
 
     # ========================================================
-    # REGENERATION LOOP
+    # ATTEMPT LOOP
     # ========================================================
 
     for attempt in range(
@@ -629,8 +831,17 @@ def generate_and_validate_acceptance_criteria(
     ):
 
         print(
-            f"\n===== AC GENERATION ATTEMPT "
-            f"{attempt} ====="
+            "\n"
+            + "=" * 70
+        )
+
+        print(
+            f"AC GENERATION ATTEMPT "
+            f"{attempt}/{max_attempts}"
+        )
+
+        print(
+            "=" * 70
         )
 
 
@@ -655,6 +866,7 @@ def generate_and_validate_acceptance_criteria(
                 )
             )
 
+
         except Exception as error:
 
             print(
@@ -666,13 +878,71 @@ def generate_and_validate_acceptance_criteria(
                 error
             )
 
+
+            # -----------------------------------------------
+            # IMPORTANT
+            # -----------------------------------------------
+            #
+            # Do NOT immediately stop.
+            #
+            # Give the next attempt a clean instruction.
+            #
+
             feedback = (
-                "Previous generation failed because "
-                "of an LLM or structured-output error. "
-                "Generate valid Acceptance Criteria."
+                "The previous Acceptance Criteria generation "
+                "failed because the LLM response was invalid, "
+                "empty, or malformed.\n\n"
+                "Generate a valid structured Acceptance "
+                "Criteria list.\n"
+                "Do not invent requirements."
             )
 
-            continue
+
+            if attempt < max_attempts:
+
+                print(
+                    f"\n🔄 Regenerating..."
+                )
+
+                print(
+                    f"Next attempt: "
+                    f"{attempt + 1}/{max_attempts}"
+                )
+
+                continue
+
+
+            break
+
+
+        # ====================================================
+        # EMPTY GENERATION
+        # ====================================================
+
+        if not generated_criteria:
+
+            print(
+                "\n❌ NO AC CANDIDATES GENERATED"
+            )
+
+
+            feedback = (
+                "No Acceptance Criteria were generated.\n"
+                "Generate at least one valid Acceptance "
+                "Criterion grounded in the Business Requirement."
+            )
+
+
+            if attempt < max_attempts:
+
+                print(
+                    "\n🔄 Regeneration required."
+                )
+
+                continue
+
+
+            break
 
 
         print(
@@ -683,11 +953,15 @@ def generate_and_validate_acceptance_criteria(
 
 
         # ====================================================
-        # CANDIDATE VALIDATION
+        # REJECTED FEEDBACK
         # ====================================================
 
         rejected_feedback = []
 
+
+        # ====================================================
+        # VALIDATE EACH AC
+        # ====================================================
 
         for index, ac in enumerate(
             generated_criteria,
@@ -695,8 +969,18 @@ def generate_and_validate_acceptance_criteria(
         ):
 
             print(
-                f"\n--- AC CANDIDATE {index} ---"
+                "\n"
+                + "-" * 60
             )
+
+            print(
+                f"AC CANDIDATE {index}"
+            )
+
+            print(
+                "-" * 60
+            )
+
 
             print(
                 "Given:",
@@ -731,6 +1015,7 @@ def generate_and_validate_acceptance_criteria(
                     errors
                 )
 
+
                 print(
                     "\nPYTHON VALIDATION: FAIL"
                 )
@@ -740,9 +1025,11 @@ def generate_and_validate_acceptance_criteria(
                     reason
                 )
 
+
                 rejected_feedback.append(
                     reason
                 )
+
 
                 continue
 
@@ -753,7 +1040,7 @@ def generate_and_validate_acceptance_criteria(
 
 
             # =================================================
-            # DUPLICATE VALIDATION
+            # DUPLICATE CHECK
             # =================================================
 
             if is_duplicate_acceptance_criteria(
@@ -761,13 +1048,14 @@ def generate_and_validate_acceptance_criteria(
                 approved_criteria
             ):
 
-                print(
-                    "\nDUPLICATE CHECK: FAIL"
-                )
-
                 reason = (
                     "Equivalent Acceptance Criterion "
                     "already approved."
+                )
+
+
+                print(
+                    "\nDUPLICATE CHECK: FAIL"
                 )
 
                 print(
@@ -775,9 +1063,11 @@ def generate_and_validate_acceptance_criteria(
                     reason
                 )
 
+
                 rejected_feedback.append(
                     reason
                 )
+
 
                 continue
 
@@ -806,6 +1096,7 @@ def generate_and_validate_acceptance_criteria(
                     )
                 )
 
+
             except Exception as error:
 
                 print(
@@ -813,14 +1104,18 @@ def generate_and_validate_acceptance_criteria(
                     "VALIDATION ERROR"
                 )
 
+
                 print(
                     "Error:",
                     error
                 )
 
+
                 rejected_feedback.append(
-                    "Semantic validation failed."
+                    "Semantic validation failed because "
+                    "the validator encountered an error."
                 )
+
 
                 continue
 
@@ -829,18 +1124,23 @@ def generate_and_validate_acceptance_criteria(
                 "\nSEMANTIC VALIDATION:"
             )
 
+
             print(
                 semantic_result
             )
 
 
             # =================================================
-            # APPROVE
+            # APPROVAL
             # =================================================
 
-            if semantic_result.startswith(
+            if semantic_result.upper().startswith(
                 "PASS"
             ):
+
+                # ---------------------------------------------
+                # Store ONLY validated data
+                # ---------------------------------------------
 
                 approved_criteria.append(
                     {
@@ -866,16 +1166,16 @@ def generate_and_validate_acceptance_criteria(
 
 
                 print(
-                    "\n✅ ACCEPTANCE CRITERIA "
-                    "APPROVED"
+                    "\n✅ ACCEPTANCE CRITERION APPROVED"
                 )
+
 
             else:
 
                 print(
-                    "\n❌ ACCEPTANCE CRITERIA "
-                    "REJECTED"
+                    "\n❌ ACCEPTANCE CRITERION REJECTED"
                 )
+
 
                 rejected_feedback.append(
                     semantic_result
@@ -889,35 +1189,85 @@ def generate_and_validate_acceptance_criteria(
         if approved_criteria:
 
             print(
-                "\n✅ At least one valid "
-                "Acceptance Criterion approved."
+                "\n"
+                + "=" * 70
             )
 
+            print(
+                "✅ AC GENERATION SUCCESSFUL"
+            )
+
+            print(
+                f"Approved Criteria: "
+                f"{len(approved_criteria)}"
+            )
+
+            print(
+                f"Completed on attempt: "
+                f"{attempt}/{max_attempts}"
+            )
+
+            print(
+                "=" * 70
+            )
+
+
             break
+
+
+        # ====================================================
+        # NO APPROVED CRITERIA
+        # ====================================================
+
+        print(
+            "\n❌ NO ACCEPTANCE CRITERIA APPROVED "
+            f"ON ATTEMPT {attempt}"
+        )
+
+
+        # ====================================================
+        # BUILD FEEDBACK
+        # ====================================================
+
+        if rejected_feedback:
+
+            # Limit feedback size so that regeneration
+            # does not unnecessarily make the next prompt huge.
+
+            feedback = "\n".join(
+                rejected_feedback[:10]
+            )
+
+
+        else:
+
+            feedback = (
+                "All generated Acceptance Criteria were "
+                "rejected.\n"
+                "Generate new criteria strictly grounded "
+                "in the Original Business Requirement."
+            )
 
 
         # ====================================================
         # REGENERATION
         # ====================================================
 
-        feedback = "\n".join(
-            rejected_feedback
-        )
-
-
-        if not feedback:
-
-            feedback = (
-                "All Acceptance Criteria were rejected. "
-                "Generate new criteria strictly grounded "
-                "in the original Business Requirement."
-            )
-
-
         if attempt < max_attempts:
 
             print(
-                "\n🔄 Regeneration required."
+                "\n🔄 REGENERATION REQUIRED"
+            )
+
+            print(
+                f"Next attempt: "
+                f"{attempt + 1}/{max_attempts}"
+            )
+
+        else:
+
+            print(
+                "\n⛔ MAXIMUM AC ATTEMPTS REACHED"
             )
 
 
@@ -928,7 +1278,12 @@ def generate_and_validate_acceptance_criteria(
     if not approved_criteria:
 
         print(
-            "\n❌ NO ACCEPTANCE CRITERIA APPROVED"
+            "\n"
+            + "=" * 70
+        )
+
+        print(
+            "❌ ACCEPTANCE CRITERIA GENERATION FAILED"
         )
 
         print(
@@ -936,11 +1291,18 @@ def generate_and_validate_acceptance_criteria(
             f"{max_attempts}"
         )
 
+        print(
+            "=" * 70
+        )
+
+
+        # IMPORTANT:
+        # Always return list.
         return []
 
 
     # ========================================================
-    # ASSIGN IDs ONLY AFTER APPROVAL
+    # ASSIGN IDs AFTER VALIDATION
     # ========================================================
 
     final_criteria = []
@@ -982,7 +1344,8 @@ def generate_and_validate_acceptance_criteria(
     # ========================================================
 
     print(
-        "\n========================================"
+        "\n"
+        + "=" * 70
     )
 
     print(
@@ -990,7 +1353,7 @@ def generate_and_validate_acceptance_criteria(
     )
 
     print(
-        "========================================"
+        "=" * 70
     )
 
 

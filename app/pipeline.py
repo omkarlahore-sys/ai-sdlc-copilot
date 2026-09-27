@@ -23,6 +23,10 @@ from app.models.traceability import (
     TraceabilityReport
 )
 
+from app.storage.file_storage import (
+    save_pipeline_result
+)
+
 
 # ============================================================
 # HELPER FUNCTIONS
@@ -34,7 +38,6 @@ def find_epic_by_id(epics, epic_id):
     """
 
     for epic in epics:
-
         if epic["id"] == epic_id:
             return epic
 
@@ -47,7 +50,6 @@ def find_user_story_by_id(user_stories, user_story_id):
     """
 
     for story in user_stories:
-
         if story["id"] == user_story_id:
             return story
 
@@ -79,7 +81,6 @@ def run_pipeline(
     )
 
     if not epics:
-
         raise RuntimeError(
             "Pipeline stopped: No Epic was approved."
         )
@@ -135,7 +136,6 @@ def run_pipeline(
         )
 
         if not user_stories:
-
             raise RuntimeError(
                 f"Pipeline stopped: No User Stories "
                 f"approved for {epic['id']}."
@@ -168,7 +168,6 @@ def run_pipeline(
             )
 
     if not all_user_stories:
-
         raise RuntimeError(
             "Pipeline stopped: No User Stories "
             "were approved."
@@ -196,7 +195,6 @@ def run_pipeline(
         )
 
         if parent_epic is None:
-
             raise RuntimeError(
                 f"Pipeline stopped: Parent Epic "
                 f"{story['parent_epic_id']} "
@@ -240,7 +238,6 @@ def run_pipeline(
         )
 
         if not acceptance_criteria:
-
             raise RuntimeError(
                 f"Pipeline stopped: No Acceptance "
                 f"Criteria approved for {story['id']}."
@@ -283,7 +280,6 @@ def run_pipeline(
             )
 
     if not all_acceptance_criteria:
-
         raise RuntimeError(
             "Pipeline stopped: No Acceptance "
             "Criteria were approved."
@@ -309,7 +305,6 @@ def run_pipeline(
         )
 
         if parent_story is None:
-
             raise RuntimeError(
                 f"Pipeline stopped: Parent User Story "
                 f"{ac['parent_story_id']} "
@@ -326,7 +321,6 @@ def run_pipeline(
         )
 
         if parent_epic is None:
-
             raise RuntimeError(
                 f"Pipeline stopped: Parent Epic "
                 f"{parent_story['parent_epic_id']} "
@@ -335,7 +329,7 @@ def run_pipeline(
             )
 
         # ----------------------------------------------------
-        # Additional Traceability Consistency Check
+        # Traceability Consistency Check
         # ----------------------------------------------------
 
         if ac["parent_epic_id"] != parent_epic["id"]:
@@ -390,7 +384,6 @@ def run_pipeline(
         )
 
         if not test_cases:
-
             raise RuntimeError(
                 f"Pipeline stopped: No Test Case "
                 f"approved for {ac['id']}."
@@ -408,7 +401,6 @@ def run_pipeline(
                 ]
                 != ac["id"]
             ):
-
                 raise RuntimeError(
                     f"Traceability mismatch: Test Case "
                     f"{test_case['id']} does not belong "
@@ -419,7 +411,6 @@ def run_pipeline(
                 test_case["parent_story_id"]
                 != parent_story["id"]
             ):
-
                 raise RuntimeError(
                     f"Traceability mismatch: Test Case "
                     f"{test_case['id']} does not belong "
@@ -431,7 +422,6 @@ def run_pipeline(
                 test_case["parent_epic_id"]
                 != parent_epic["id"]
             ):
-
                 raise RuntimeError(
                     f"Traceability mismatch: Test Case "
                     f"{test_case['id']} does not belong "
@@ -442,7 +432,6 @@ def run_pipeline(
                 test_case["source_requirement_id"]
                 != business_requirement_id
             ):
-
                 raise RuntimeError(
                     f"Traceability mismatch: Test Case "
                     f"{test_case['id']} has incorrect "
@@ -451,10 +440,7 @@ def run_pipeline(
 
             all_test_cases.append(test_case)
 
-            print(
-                "\nID:",
-                test_case["id"]
-            )
+            print("\nID:", test_case["id"])
 
             print(
                 "Title:",
@@ -472,7 +458,6 @@ def run_pipeline(
                 test_case["steps"],
                 start=1
             ):
-
                 print(
                     f"{number}. {step}"
                 )
@@ -511,7 +496,6 @@ def run_pipeline(
             )
 
     if not all_test_cases:
-
         raise RuntimeError(
             "Pipeline stopped: No Test Cases "
             "were approved."
@@ -560,9 +544,7 @@ def run_pipeline(
             )
         )
 
-        traceability_records.append(
-            record
-        )
+        traceability_records.append(record)
 
         print(
             f"\n{record.business_requirement_id}"
@@ -573,12 +555,74 @@ def run_pipeline(
         )
 
     # ========================================================
-    # TRACEABILITY REPORT
+    # STEP 6 — BUILD TRACEABILITY REPORT
     # ========================================================
 
     traceability_report = TraceabilityReport(
         records=traceability_records
     )
+
+    # ========================================================
+    # FINAL RESULT
+    # ========================================================
+
+    result = {
+
+        "business_requirement": {
+
+            "id": business_requirement_id,
+
+            "text": business_requirement
+        },
+
+        "epics": epics,
+
+        "user_stories": all_user_stories,
+
+        "acceptance_criteria": (
+            all_acceptance_criteria
+        ),
+
+        "test_cases": (
+            all_test_cases
+        ),
+
+        "traceability": (
+            traceability_report
+        )
+    }
+
+    # ========================================================
+    # STEP 7 — SAVE TO FILE SYSTEM
+    # ========================================================
+
+    print("\n" + "=" * 80)
+    print("                    FILE STORAGE")
+    print("=" * 80)
+
+    try:
+
+        run_id = save_pipeline_result(
+            result
+        )
+
+        result["run_id"] = run_id
+
+        print(
+            "\nArtifacts successfully saved."
+        )
+
+        print(
+            "Run ID:",
+            run_id
+        )
+
+    except Exception as exc:
+
+        raise RuntimeError(
+            f"Pipeline generated successfully, "
+            f"but file-system storage failed: {exc}"
+        ) from exc
 
     # ========================================================
     # PIPELINE SUMMARY
@@ -591,6 +635,11 @@ def run_pipeline(
     print(
         "\nBusiness Requirement:",
         business_requirement_id
+    )
+
+    print(
+        "Run ID:",
+        run_id
     )
 
     print(
@@ -619,35 +668,7 @@ def run_pipeline(
     )
 
     print("\n" + "=" * 80)
-    print("             ✅ END-TO-END PIPELINE COMPLETED")
+    print("             END-TO-END PIPELINE COMPLETED")
     print("=" * 80)
 
-    # ========================================================
-    # FINAL RESULT
-    # ========================================================
-
-    return {
-
-        "business_requirement": {
-
-            "id": business_requirement_id,
-
-            "text": business_requirement
-        },
-
-        "epics": epics,
-
-        "user_stories": all_user_stories,
-
-        "acceptance_criteria": (
-            all_acceptance_criteria
-        ),
-
-        "test_cases": (
-            all_test_cases
-        ),
-
-        "traceability": (
-            traceability_report
-        )
-    }
+    return result

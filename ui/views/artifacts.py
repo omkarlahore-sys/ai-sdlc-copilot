@@ -123,37 +123,25 @@ def _rows(
     key: str,
     label: Callable[[dict], str],
 ) -> str:
-    """Render selectable artifact rows with stable, unique Streamlit keys."""
-
+    """A selectable list of artifacts, rendered as real buttons (not
+    st.dataframe) so each row can be styled and is keyboard-navigable."""
     ids = [i["id"] for i in items]
-
-    if not ids:
-        return ""
-
     state_key = f"{key}_sel"
     current = st.session_state.get(state_key)
-
     if current not in ids:
         current = ids[0]
         st.session_state[state_key] = current
 
-    for index, item in enumerate(items):
-        artifact_id = item["id"]
-        selected = artifact_id == current
-
-        # IMPORTANT:
-        # Use index + artifact ID so every Streamlit element has
-        # a guaranteed unique key.
-        container_key = f"art_{kind}_{key}_{index}_{artifact_id}"
-        button_key = f"{key}_btn_{index}_{artifact_id}"
-
-        with st.container(key=container_key):
+    for item in items:
+        selected = item["id"] == current
+        state = "on" if selected else "off"
+        with st.container(key=f"art_{kind}_{state}_{item['id']}"):
             if st.button(
                 label(item),
-                key=button_key,
+                key=f"{key}_btn_{item['id']}",
                 width="stretch",
             ):
-                st.session_state[state_key] = artifact_id
+                st.session_state[state_key] = item["id"]
                 st.rerun()
 
     return st.session_state[state_key]

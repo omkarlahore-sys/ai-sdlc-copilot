@@ -19,6 +19,14 @@ client = Groq(
 
 
 # ============================================================
+# CONFIGURATION
+# ============================================================
+
+DEFAULT_MAX_ATTEMPTS = 5
+DEFAULT_VALIDATOR_RETRIES = 3
+
+
+# ============================================================
 # USER STORY CANDIDATE GENERATION
 # ============================================================
 
@@ -28,7 +36,7 @@ def generate_user_story_candidates(
     feedback=None
 ):
     """
-    Generate all distinct User Stories for ONE approved Epic.
+    Generate distinct User Story candidates for ONE approved Epic.
 
     Returns:
         list[UserStory]
@@ -37,18 +45,22 @@ def generate_user_story_candidates(
     feedback_text = ""
 
     if feedback:
-        feedback_text = f"""
-Previous User Story candidates failed validation.
 
-Validator feedback:
+        feedback_text = f"""
+Previous User Story candidates had validation problems.
+
+VALIDATOR FEEDBACK:
 {feedback}
 
 Generate corrected User Stories.
 
-Important:
-- Fix the specific problems identified above.
-- Do not repeat unsupported business behavior.
-- Do not introduce new requirements.
+IMPORTANT:
+- Fix only the identified problems.
+- Do not introduce new business requirements.
+- Do not repeat unsupported behavior.
+- Preserve behavior explicitly supported by the
+  Original Business Requirement.
+- If only one User Story is supported, generate one.
 """
 
 
@@ -96,43 +108,59 @@ STRICT RULES
 5. Every User Story must be supported by the ORIGINAL
    Business Requirement.
 
-6. The Epic cannot introduce a business behavior that
-   is not supported by the Original Business Requirement.
+6. The Epic cannot introduce business behavior that is
+   not supported by the Original Business Requirement.
 
 7. Do not infer missing requirements.
 
 8. Do not use common industry practices as evidence.
 
 9. Do not add unsupported:
+
    - security rules
    - validation rules
    - emails
    - reset links
    - verification codes
+   - OTP
    - expiration times
    - account verification
    - notifications
    - additional workflows
    - APIs
    - databases
-   - technical implementation details
+   - backend implementation
+   - frontend implementation
+   - technical architecture
 
-10. Use the exact Agile format:
+10. Use exactly this Agile format:
 
     As a <user>, I want <goal>, so that <benefit>.
 
-11. The User Story should describe a business goal,
+11. The User Story must describe a business goal,
     not technical implementation.
 
 12. If the Epic requires only one User Story,
     generate exactly one.
 
 13. If the Epic genuinely requires multiple distinct
-    User Stories, generate all of them.
+    User Stories, generate all supported stories.
 
 14. Do not generate IDs.
 
 15. Do not add explanations outside the structured output.
+
+16. Do not create a User Story only to increase the count.
+
+17. Prefer fewer valid User Stories over unsupported ones.
+
+18. Different wording is allowed when the business meaning
+    remains supported by the Original Business Requirement.
+
+19. Preserve explicitly stated business outcomes.
+
+20. Do not introduce new behavior through the "so that"
+    portion of the User Story.
 
 {feedback_text}
 
@@ -141,41 +169,55 @@ STRICT RULES
 OUTPUT
 ============================================================
 
-Return only the structured list of User Stories.
+Return only the structured User Story list.
 """
 
 
     schema = {
+
         "type": "object",
+
         "properties": {
+
             "user_stories": {
+
                 "type": "array",
+
                 "items": {
+
                     "type": "object",
+
                     "properties": {
+
                         "title": {
                             "type": "string"
                         },
+
                         "story": {
                             "type": "string"
                         }
                     },
+
                     "required": [
                         "title",
                         "story"
                     ],
+
                     "additionalProperties": False
                 }
             }
         },
+
         "required": [
             "user_stories"
         ],
+
         "additionalProperties": False
     }
 
 
     response = client.chat.completions.create(
+
         model="openai/gpt-oss-120b",
 
         messages=[
@@ -187,38 +229,63 @@ Return only the structured list of User Stories.
 
         response_format={
             "type": "json_schema",
+
             "json_schema": {
+
                 "name": "multiple_user_stories",
+
                 "schema": schema,
+
                 "strict": True
             }
         },
 
-        temperature=0
+        temperature=0,
+
+        max_tokens=2000
     )
 
 
     content = response.choices[0].message.content
 
+
     if not content:
+
         raise ValueError(
             "LLM returned empty User Story response."
         )
 
 
-    data = json.loads(content)
+    try:
+
+        data = json.loads(content)
+
+    except json.JSONDecodeError as error:
+
+        raise ValueError(
+            f"Invalid JSON returned by User Story generator: "
+            f"{error}"
+        )
 
 
     if "user_stories" not in data:
+
         raise ValueError(
             "LLM response does not contain 'user_stories'."
         )
 
 
-    return [
-        UserStory.model_validate(story)
-        for story in data["user_stories"]
-    ]
+    validated_stories = []
+
+
+    for story in data["user_stories"]:
+
+        validated_stories.append(
+            UserStory.model_validate(story)
+        )
+
+
+    return validated_stories
 
 
 # ============================================================
@@ -265,17 +332,20 @@ def python_validate_user_story(user_story):
             .lower()
         )
 
+
         if "as a" not in story_lower:
 
             errors.append(
                 "Missing 'As a'."
             )
 
+
         if "i want" not in story_lower:
 
             errors.append(
                 "Missing 'I want'."
             )
+
 
         if "so that" not in story_lower:
 
@@ -292,7 +362,69 @@ def python_validate_user_story(user_story):
 
         return False, errors
 
+
     return True, []
+
+
+# ============================================================
+# DUPLICATE DETECTION
+# ============================================================
+
+def is_duplicate_user_story(
+    user_story,
+    approved_stories
+):
+    """
+    Detect exact duplicate title or story.
+
+    Returns:
+        True  -> duplicate
+        False -> unique
+    """
+
+    new_title = (
+        user_story.title
+        .strip()
+        .lower()
+    )
+
+
+    new_story = (
+        user_story.story
+        .strip()
+        .lower()
+    )
+
+
+    for approved in approved_stories:
+
+        existing_title = (
+            approved["title"]
+            .strip()
+            .lower()
+        )
+
+
+        existing_story = (
+            approved["story"]
+            .strip()
+            .lower()
+        )
+
+
+        # Exact title match
+        if new_title == existing_title:
+
+            return True
+
+
+        # Exact story match
+        if new_story == existing_story:
+
+            return True
+
+
+    return False
 
 
 # ============================================================
@@ -302,19 +434,32 @@ def python_validate_user_story(user_story):
 def semantic_validate_user_story(
     business_requirement,
     approved_epic,
-    user_story
+    user_story,
+    validator_retries=DEFAULT_VALIDATOR_RETRIES
 ):
     """
     LLM-based semantic traceability validation.
+
+    IMPORTANT:
+
+    An empty response from the semantic validator is NOT
+    treated as a business rejection.
+
+    The validator itself is retried.
 
     Returns:
         PASS
         OR
         FAIL: reason
+
+    Raises:
+        RuntimeError if the validator cannot provide a valid
+        response after all validator retries.
     """
 
+
     validation_prompt = f"""
-You are a STRICT requirements traceability validator.
+You are a STRICT but FAIR requirements traceability validator.
 
 
 ============================================================
@@ -347,157 +492,239 @@ Story:
 
 
 ============================================================
-VALIDATION RULES
+VALIDATION PRINCIPLE
 ============================================================
 
-1. The User Story must directly support the approved Epic.
+The ORIGINAL BUSINESS REQUIREMENT is the highest authority.
 
-2. The User Story must preserve the original business intent.
+The User Story is VALID when:
 
-3. EVERY business behavior in the User Story must be
-   supported by the ORIGINAL Business Requirement.
+1. It directly supports the approved Epic.
 
-4. Do not infer missing requirements.
+2. Its business intent is supported by the Original
+   Business Requirement.
 
-5. Do not use common industry practices as evidence.
+3. Every business behavior in the User Story is supported
+   by the Original Business Requirement.
 
-6. Reject unsupported:
-   - security requirements
-   - email behavior
-   - reset links
-   - verification codes
-   - expiration times
-   - account verification
-   - notifications
-   - additional workflows
-   - APIs
-   - databases
-   - technical implementation
+4. It does not introduce a new business requirement.
 
-7. Do not allow the Epic to introduce a requirement that
-   is not present in the Original Business Requirement.
-
-8. The User Story must describe a business capability.
-
-9. The User Story must follow:
+5. It follows:
 
    As a <user>, I want <goal>, so that <benefit>.
 
-10. Do not reject a User Story merely because it uses
-    different wording from the requirement.
 
-11. Focus on BUSINESS SEMANTICS, not exact wording.
+============================================================
+IMPORTANT
+============================================================
 
-12. If the original requirement explicitly supports a
-    concept such as password recovery, regaining access,
-    defining a new password, or another business behavior,
-    that concept may be used.
+Do NOT require exact wording.
 
-13. If a behavior is NOT supported by the requirement,
-    reject it.
+Different natural language wording is acceptable when
+the business meaning is supported.
 
-If ANY unsupported business behavior exists,
-return FAIL.
+For example:
+
+Business Requirement:
+"Customers can search the product catalog."
+
+User Story:
+"As a customer, I want to search the product catalog,
+so that I can find products I need."
+
+This is VALID because the business behavior is supported.
 
 
 ============================================================
-OUTPUT FORMAT
+STRICT RULES
 ============================================================
 
-Return exactly:
+Reject unsupported:
+
+- security requirements
+- emails
+- reset links
+- verification codes
+- OTP
+- expiration times
+- account verification
+- notifications
+- additional workflows
+- APIs
+- databases
+- backend implementation
+- frontend implementation
+- technical architecture
+- infrastructure behavior
+
+However:
+
+If a behavior is explicitly stated in the ORIGINAL
+BUSINESS REQUIREMENT, it IS allowed.
+
+Do not reject an explicitly stated business outcome.
+
+Do not infer missing requirements.
+
+Do not use common industry practices as evidence.
+
+Do not reject merely because the wording is different.
+
+Focus on business semantics and traceability.
+
+
+============================================================
+OUTPUT
+============================================================
+
+Return EXACTLY one of the following:
 
 PASS
 
 OR
 
-FAIL: <specific reason>
+FAIL: <specific unsupported business behavior and reason>
+
+Do not return anything else.
 """
 
 
-    response = client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-
-        messages=[
-            {
-                "role": "user",
-                "content": validation_prompt
-            }
-        ],
-
-        temperature=0
-    )
+    last_error = None
 
 
-    result = response.choices[0].message.content
+    # ========================================================
+    # VALIDATOR RETRY LOOP
+    # ========================================================
 
+    for retry in range(
+        1,
+        validator_retries + 1
+    ):
 
-    if not result:
-
-        return (
-            "FAIL: Semantic validator returned empty response."
+        print(
+            f"\nSemantic validator attempt "
+            f"{retry}/{validator_retries}"
         )
 
 
-    return result.strip()
+        try:
+
+            response = client.chat.completions.create(
+
+                model="openai/gpt-oss-120b",
+
+                messages=[
+                    {
+                        "role": "user",
+                        "content": validation_prompt
+                    }
+                ],
+
+                temperature=0,
+
+                max_tokens=300
+            )
 
 
-# ============================================================
-# DUPLICATE DETECTION
-# ============================================================
+            # ------------------------------------------------
+            # SAFE RESPONSE EXTRACTION
+            # ------------------------------------------------
 
-def is_duplicate_user_story(
-    user_story,
-    approved_stories
-):
-    """
-    Detect exact duplicate title or story.
+            if not response.choices:
 
-    Returns:
-        True  -> duplicate
-        False -> unique
-    """
+                last_error = (
+                    "Semantic validator returned "
+                    "no choices."
+                )
 
-    new_title = (
-        user_story.title
-        .strip()
-        .lower()
+                print(
+                    f"⚠️ {last_error}"
+                )
+
+                continue
+
+
+            message = response.choices[0].message
+
+
+            result = message.content
+
+
+            # ------------------------------------------------
+            # EMPTY RESPONSE
+            # ------------------------------------------------
+
+            if not result or not result.strip():
+
+                last_error = (
+                    "Semantic validator returned "
+                    "an empty response."
+                )
+
+                print(
+                    f"⚠️ {last_error}"
+                )
+
+                continue
+
+
+            result = result.strip()
+
+
+            # ------------------------------------------------
+            # VALID PASS
+            # ------------------------------------------------
+
+            if result == "PASS":
+
+                return "PASS"
+
+
+            # ------------------------------------------------
+            # VALID FAIL
+            # ------------------------------------------------
+
+            if result.startswith("FAIL:"):
+
+                return result
+
+
+            # ------------------------------------------------
+            # HANDLE UNEXPECTED OUTPUT
+            # ------------------------------------------------
+
+            last_error = (
+                "Unexpected semantic validator output: "
+                f"{result}"
+            )
+
+            print(
+                f"⚠️ {last_error}"
+            )
+
+
+        except Exception as error:
+
+            last_error = str(error)
+
+            print(
+                "\n⚠️ Semantic validator exception:"
+            )
+
+            print(
+                error
+            )
+
+
+    # ========================================================
+    # VALIDATOR FAILED
+    # ========================================================
+
+    raise RuntimeError(
+        "Semantic validator failed after "
+        f"{validator_retries} retries. "
+        f"Last error: {last_error}"
     )
-
-    new_story = (
-        user_story.story
-        .strip()
-        .lower()
-    )
-
-
-    for approved in approved_stories:
-
-        existing_title = (
-            approved["title"]
-            .strip()
-            .lower()
-        )
-
-        existing_story = (
-            approved["story"]
-            .strip()
-            .lower()
-        )
-
-
-        # Exact title match
-        if new_title == existing_title:
-
-            return True
-
-
-        # Exact story match
-        if new_story == existing_story:
-
-            return True
-
-
-    return False
 
 
 # ============================================================
@@ -509,32 +736,50 @@ def generate_and_validate_user_stories(
     approved_epic,
     business_requirement_id="BR-001",
     epic_id="EPIC-001",
-    max_attempts=3
+    max_attempts=DEFAULT_MAX_ATTEMPTS,
+    validator_retries=DEFAULT_VALIDATOR_RETRIES
 ):
     """
     Generate, validate and return User Stories
     for ONE approved Epic.
 
-    Important:
-        This function ALWAYS returns a list.
+    IMPORTANT:
+
+    max_attempts controls User Story regeneration.
+
+    validator_retries controls retries of the semantic
+    validator itself.
+
+    These are intentionally separate.
 
     Example:
 
-        [
-            {
-                "id": "US-001",
-                "title": "...",
-                "story": "...",
-                "parent_epic_id": "EPIC-001",
-                "source_requirement_id": "BR-001"
-            }
-        ]
+        max_attempts = 5
+        validator_retries = 3
+
+    Means:
+
+        Up to 5 User Story generation attempts.
+
+        Each semantic validation can independently retry
+        up to 3 times.
+
+    Returns:
+
+        list[dict]
     """
 
 
     feedback = None
 
+
     approved_stories = []
+
+
+    generation_errors = []
+
+
+    semantic_validation_errors = []
 
 
     # ========================================================
@@ -548,8 +793,16 @@ def generate_and_validate_user_stories(
 
 
         print(
-            f"\n===== USER STORY GENERATION ATTEMPT "
-            f"{attempt} ====="
+            "\n========================================================"
+        )
+
+        print(
+            f"USER STORY GENERATION ATTEMPT "
+            f"{attempt}/{max_attempts}"
+        )
+
+        print(
+            "========================================================"
         )
 
 
@@ -561,8 +814,11 @@ def generate_and_validate_user_stories(
 
             candidates = (
                 generate_user_story_candidates(
+
                     business_requirement,
+
                     approved_epic,
+
                     feedback
                 )
             )
@@ -580,10 +836,24 @@ def generate_and_validate_user_stories(
             )
 
 
-            feedback = (
-                "User Story generation failed. "
-                "Return a valid structured list."
+            generation_errors.append(
+                str(error)
             )
+
+
+            feedback = (
+                "Previous User Story generation failed "
+                "because of an LLM or structured-output "
+                "problem. Generate a valid structured "
+                "User Story list."
+            )
+
+
+            if attempt < max_attempts:
+
+                print(
+                    "\n🔄 Regeneration required."
+                )
 
             continue
 
@@ -604,6 +874,13 @@ def generate_and_validate_user_stories(
                 "Generate at least one valid User Story "
                 "for the approved Epic."
             )
+
+
+            if attempt < max_attempts:
+
+                print(
+                    "\n🔄 Regeneration required."
+                )
 
             continue
 
@@ -711,6 +988,12 @@ def generate_and_validate_user_stories(
                 )
 
 
+                print(
+                    "Reason:",
+                    reason
+                )
+
+
                 rejected_feedback.append(
                     reason
                 )
@@ -732,9 +1015,14 @@ def generate_and_validate_user_stories(
 
                 semantic_result = (
                     semantic_validate_user_story(
+
                         business_requirement,
+
                         approved_epic,
-                        story
+
+                        story,
+
+                        validator_retries
                     )
                 )
 
@@ -742,7 +1030,8 @@ def generate_and_validate_user_stories(
             except Exception as error:
 
                 print(
-                    "\n❌ SEMANTIC VALIDATION ERROR"
+                    "\n⚠️ SEMANTIC VALIDATION "
+                    "COULD NOT COMPLETE"
                 )
 
 
@@ -752,11 +1041,18 @@ def generate_and_validate_user_stories(
                 )
 
 
-                rejected_feedback.append(
-                    "Semantic validation failed."
+                semantic_validation_errors.append(
+                    str(error)
                 )
 
 
+                # IMPORTANT:
+                #
+                # Do NOT add this to rejected_feedback.
+                #
+                # The User Story was not proven invalid.
+                # The validator itself failed.
+                #
                 continue
 
 
@@ -774,9 +1070,7 @@ def generate_and_validate_user_stories(
             # APPROVAL
             # =================================================
 
-            if semantic_result.startswith(
-                "PASS"
-            ):
+            if semantic_result == "PASS":
 
 
                 approved_stories.append(
@@ -819,7 +1113,7 @@ def generate_and_validate_user_stories(
 
 
             # ------------------------------------------------
-            # Assign IDs only after validation
+            # Assign IDs ONLY after validation
             # ------------------------------------------------
 
             for index, story in enumerate(
@@ -874,9 +1168,23 @@ def generate_and_validate_user_stories(
                     f'{story["title"]}'
                 )
 
+                print(
+                    f'Story: '
+                    f'{story["story"]}'
+                )
+
+                print(
+                    f'Parent Epic: '
+                    f'{story["parent_epic_id"]}'
+                )
+
+                print(
+                    f'Source Requirement: '
+                    f'{story["source_requirement_id"]}'
+                )
+
 
             # ------------------------------------------------
-            # IMPORTANT:
             # ALWAYS RETURN LIST
             # ------------------------------------------------
 
@@ -887,22 +1195,45 @@ def generate_and_validate_user_stories(
         # NO STORIES APPROVED
         # ====================================================
 
-        feedback = "\n".join(
-            rejected_feedback
-        )
+        # ----------------------------------------------------
+        # If semantic validation itself failed, don't claim
+        # that the User Stories were semantically rejected.
+        # ----------------------------------------------------
 
+        if semantic_validation_errors:
 
-        if not feedback:
+            print(
+                "\n⚠️ Semantic validation did not "
+                "complete successfully."
+            )
 
-            feedback = (
-                "No User Stories passed validation. "
-                "Generate corrected User Stories."
+            print(
+                "The generated User Stories were "
+                "NOT automatically marked invalid."
             )
 
 
-        print(
-            "\n❌ NO USER STORIES APPROVED"
-        )
+        # ====================================================
+        # PREPARE REGENERATION FEEDBACK
+        # ====================================================
+
+        if rejected_feedback:
+
+            # Limit feedback size so it does not grow
+            # excessively for large requirements.
+
+            feedback = "\n".join(
+                rejected_feedback[:10]
+            )
+
+
+        else:
+
+            feedback = (
+                "No User Stories passed validation. "
+                "Generate corrected User Stories strictly "
+                "grounded in the Original Business Requirement."
+            )
 
 
         # ====================================================
@@ -912,13 +1243,18 @@ def generate_and_validate_user_stories(
         if attempt < max_attempts:
 
             print(
-                "🔄 Regeneration required."
+                "\n🔄 Regeneration required."
+            )
+
+            print(
+                f"Next attempt: "
+                f"{attempt + 1}/{max_attempts}"
             )
 
         else:
 
             print(
-                "⛔ Maximum User Story attempts reached."
+                "\n⛔ Maximum User Story attempts reached."
             )
 
 
@@ -932,10 +1268,47 @@ def generate_and_validate_user_stories(
 
 
     print(
-        "Maximum attempts reached."
+        f"Maximum attempts reached: "
+        f"{max_attempts}"
     )
 
 
+    # --------------------------------------------------------
+    # More useful diagnostic
+    # --------------------------------------------------------
+
+    if semantic_validation_errors:
+
+        print(
+            "\n⚠️ IMPORTANT:"
+        )
+
+        print(
+            "The semantic validator failed during "
+            "validation."
+        )
+
+        print(
+            "This does NOT necessarily mean the "
+            "User Story was invalid."
+        )
+
+
+    if generation_errors:
+
+        print(
+            "\n⚠️ Generation errors encountered:"
+        )
+
+        for error in generation_errors[-3:]:
+
+            print(
+                "-",
+                error
+            )
+
+
     # IMPORTANT:
-    # Return empty LIST, not None
+    # Always return an empty LIST, never None.
+
     return []

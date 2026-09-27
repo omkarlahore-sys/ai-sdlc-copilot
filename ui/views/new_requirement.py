@@ -66,7 +66,7 @@ def render(error: str | None) -> tuple[str, bool]:
             if input_type == "Text":
                 text = st.text_area(
                     "Business requirement",
-                    max_chars=2000,
+                    max_chars=1000,
                     key="requirement_input",
                     label_visibility="collapsed",
                     placeholder=(
@@ -75,7 +75,7 @@ def render(error: str | None) -> tuple[str, bool]:
                     ),
                 )
                 st.markdown(
-                    f"<div class='hint'>{len(text or '')}/2000 characters</div>",
+                    f"<div class='hint'>{len(text or '')}/1000 characters</div>",
                     unsafe_allow_html=True,
                 )
             else:

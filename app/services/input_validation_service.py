@@ -21,7 +21,7 @@ MIN_REQUIREMENT_LENGTH = 20
 
 MAX_DIRECT_PROCESSING_LENGTH = 12000
 
-MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024
+MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024
 
 
 # ============================================================
